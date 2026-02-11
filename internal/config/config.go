@@ -27,7 +27,6 @@ type DatabaseConfig struct {
 	User     string
 	Password string
 	DBName   string
-	SSLMode  string
 }
 
 type CORSConfig struct {
@@ -39,7 +38,7 @@ type JWTConfig struct {
 }
 
 type ExecutorConfig struct {
-	Timeout      int
+	Timeout       int
 	MaxCodeLength int
 }
 
@@ -59,11 +58,10 @@ func Load() *Config {
 		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
-			Port:     getEnv("DB_PORT", "5432"),
-			User:     getEnv("DB_USER", "postgres"),
-			Password: getEnv("DB_PASSWORD", "postgres"),
-			DBName:   getEnv("DB_NAME", "programming_oj"),
-			SSLMode:  getEnv("DB_SSLMODE", "disable"),
+			Port:     getEnv("DB_PORT", "3306"),
+			User:     getEnv("DB_USER", "root"),
+			Password: getEnv("DB_PASSWORD", ""),
+			DBName:   getEnv("DB_NAME", "xfy_bs"),
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: parseOrigins(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5000")),
@@ -72,7 +70,7 @@ func Load() *Config {
 			Secret: getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
 		},
 		Executor: ExecutorConfig{
-			Timeout:      timeout,
+			Timeout:       timeout,
 			MaxCodeLength: maxCodeLength,
 		},
 	}

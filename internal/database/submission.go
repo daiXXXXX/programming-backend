@@ -25,16 +25,18 @@ func (r *SubmissionRepository) Create(submission *models.Submission) (int64, err
 	defer tx.Rollback()
 
 	// 插入提交记录
-	var submissionID int64
 	query := `
 		INSERT INTO submissions (problem_id, user_id, code, language, status, score)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id
+		VALUES (?, ?, ?, ?, ?, ?)
 	`
-	err = tx.QueryRow(
+	result, err := tx.Exec(
 		query, submission.ProblemID, submission.UserID, submission.Code,
 		submission.Language, submission.Status, submission.Score,
-	).Scan(&submissionID)
+	)
+	if err != nil {
+		return 0, err
+	}
+	submissionID, err := result.LastInsertId()
 	if err != nil {
 		return 0, err
 	}
@@ -54,7 +56,7 @@ func (r *SubmissionRepository) Create(submission *models.Submission) (int64, err
 
 			_, err = tx.Exec(
 				`INSERT INTO test_results (submission_id, test_case_id, passed, actual_output, error_message, execution_time)
-				 VALUES ($1, $2, $3, $4, $5, $6)`,
+				 VALUES (?, ?, ?, ?, ?, ?)`,
 				submissionID, result.TestCaseID, result.Passed, actualOutput, errorMsg, result.ExecutionTime,
 			)
 			if err != nil {
@@ -80,7 +82,7 @@ func (r *SubmissionRepository) GetByID(id int64) (*models.Submission, error) {
 	query := `
 		SELECT id, problem_id, user_id, code, language, status, score, submitted_at
 		FROM submissions
-		WHERE id = $1
+		WHERE id = ?
 	`
 
 	var s models.Submission
@@ -109,9 +111,9 @@ func (r *SubmissionRepository) GetByUserID(userID int64, limit, offset int) ([]m
 	query := `
 		SELECT id, problem_id, user_id, code, language, status, score, submitted_at
 		FROM submissions
-		WHERE user_id = $1
+		WHERE user_id = ?
 		ORDER BY submitted_at DESC
-		LIMIT $2 OFFSET $3
+		LIMIT ? OFFSET ?
 	`
 
 	rows, err := r.db.Query(query, userID, limit, offset)
@@ -144,9 +146,9 @@ func (r *SubmissionRepository) GetByProblemID(problemID int64, limit, offset int
 	query := `
 		SELECT id, problem_id, user_id, code, language, status, score, submitted_at
 		FROM submissions
-		WHERE problem_id = $1
+		WHERE problem_id = ?
 		ORDER BY submitted_at DESC
-		LIMIT $2 OFFSET $3
+		LIMIT ? OFFSET ?
 	`
 
 	rows, err := r.db.Query(query, problemID, limit, offset)
@@ -182,7 +184,7 @@ func (r *SubmissionRepository) getTestResults(submissionID int64) ([]models.Test
 		       tc.input, tc.expected_output
 		FROM test_results tr
 		JOIN test_cases tc ON tr.test_case_id = tc.id
-		WHERE tr.submission_id = $1
+		WHERE tr.submission_id = ?
 		ORDER BY tr.id
 	`
 
@@ -224,45 +226,28 @@ func (r *SubmissionRepository) getTestResults(submissionID int64) ([]models.Test
 
 // updateUserStats 更新用户统计信息
 func (r *SubmissionRepository) updateUserStats(tx *sql.Tx, userID int64) error {
-	// 计算统计信息
 	query := `
-		WITH solved_problems AS (
-			SELECT DISTINCT s.problem_id, p.difficulty
-			FROM submissions s
-			JOIN problems p ON s.problem_id = p.id
-			WHERE s.user_id = $1 AND s.status = 'Accepted'
-		),
-		submission_stats AS (
-			SELECT 
-				COUNT(*) as total_submissions,
-				COUNT(CASE WHEN status = 'Accepted' THEN 1 END) as accepted_submissions
-			FROM submissions
-			WHERE user_id = $1
-		)
 		INSERT INTO user_stats (user_id, total_solved, easy_solved, medium_solved, hard_solved, 
 		                        total_submissions, accepted_submissions)
 		SELECT 
-			$1,
-			COUNT(*) as total_solved,
-			COUNT(CASE WHEN difficulty = 'Easy' THEN 1 END) as easy_solved,
-			COUNT(CASE WHEN difficulty = 'Medium' THEN 1 END) as medium_solved,
-			COUNT(CASE WHEN difficulty = 'Hard' THEN 1 END) as hard_solved,
-			ss.total_submissions,
-			ss.accepted_submissions
-		FROM solved_problems sp
-		CROSS JOIN submission_stats ss
-		ON CONFLICT (user_id) 
-		DO UPDATE SET
-			total_solved = EXCLUDED.total_solved,
-			easy_solved = EXCLUDED.easy_solved,
-			medium_solved = EXCLUDED.medium_solved,
-			hard_solved = EXCLUDED.hard_solved,
-			total_submissions = EXCLUDED.total_submissions,
-			accepted_submissions = EXCLUDED.accepted_submissions,
+			?,
+			(SELECT COUNT(DISTINCT s.problem_id) FROM submissions s WHERE s.user_id = ? AND s.status = 'Accepted'),
+			(SELECT COUNT(DISTINCT s.problem_id) FROM submissions s JOIN problems p ON s.problem_id = p.id WHERE s.user_id = ? AND s.status = 'Accepted' AND p.difficulty = 'Easy'),
+			(SELECT COUNT(DISTINCT s.problem_id) FROM submissions s JOIN problems p ON s.problem_id = p.id WHERE s.user_id = ? AND s.status = 'Accepted' AND p.difficulty = 'Medium'),
+			(SELECT COUNT(DISTINCT s.problem_id) FROM submissions s JOIN problems p ON s.problem_id = p.id WHERE s.user_id = ? AND s.status = 'Accepted' AND p.difficulty = 'Hard'),
+			(SELECT COUNT(*) FROM submissions WHERE user_id = ?),
+			(SELECT COUNT(*) FROM submissions WHERE user_id = ? AND status = 'Accepted')
+		ON DUPLICATE KEY UPDATE
+			total_solved = VALUES(total_solved),
+			easy_solved = VALUES(easy_solved),
+			medium_solved = VALUES(medium_solved),
+			hard_solved = VALUES(hard_solved),
+			total_submissions = VALUES(total_submissions),
+			accepted_submissions = VALUES(accepted_submissions),
 			updated_at = CURRENT_TIMESTAMP
 	`
 
-	_, err := tx.Exec(query, userID)
+	_, err := tx.Exec(query, userID, userID, userID, userID, userID, userID, userID)
 	return err
 }
 
@@ -272,7 +257,7 @@ func (r *SubmissionRepository) GetUserStats(userID int64) (*models.UserStats, er
 		SELECT user_id, total_solved, easy_solved, medium_solved, hard_solved,
 		       total_submissions, accepted_submissions, updated_at
 		FROM user_stats
-		WHERE user_id = $1
+		WHERE user_id = ?
 	`
 
 	var stats models.UserStats
@@ -285,8 +270,8 @@ func (r *SubmissionRepository) GetUserStats(userID int64) (*models.UserStats, er
 		if err == sql.ErrNoRows {
 			// 如果没有统计信息，返回默认值
 			return &models.UserStats{
-				UserID:       userID,
-				SuccessRate:  0,
+				UserID:      userID,
+				SuccessRate: 0,
 			}, nil
 		}
 		return nil, err

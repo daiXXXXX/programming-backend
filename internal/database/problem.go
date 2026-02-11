@@ -63,7 +63,7 @@ func (r *ProblemRepository) GetByID(id int64) (*models.Problem, error) {
 		SELECT id, title, difficulty, description, input_format, output_format, 
 		       constraints, created_at, updated_at
 		FROM problems
-		WHERE id = $1
+		WHERE id = ?
 	`
 
 	var p models.Problem
@@ -91,7 +91,7 @@ func (r *ProblemRepository) GetByID(id int64) (*models.Problem, error) {
 
 // GetTags 获取题目标签
 func (r *ProblemRepository) GetTags(problemID int64) ([]string, error) {
-	query := `SELECT tag FROM problem_tags WHERE problem_id = $1 ORDER BY id`
+	query := `SELECT tag FROM problem_tags WHERE problem_id = ? ORDER BY id`
 
 	rows, err := r.db.Query(query, problemID)
 	if err != nil {
@@ -116,7 +116,7 @@ func (r *ProblemRepository) GetExamples(problemID int64) ([]models.Example, erro
 	query := `
 		SELECT id, input, output, explanation
 		FROM problem_examples
-		WHERE problem_id = $1
+		WHERE problem_id = ?
 		ORDER BY display_order, id
 	`
 
@@ -147,7 +147,7 @@ func (r *ProblemRepository) GetTestCasesMeta(problemID int64) ([]models.TestCase
 	query := `
 		SELECT id, input, expected_output
 		FROM test_cases
-		WHERE problem_id = $1 AND is_sample = true
+		WHERE problem_id = ? AND is_sample = true
 		ORDER BY display_order, id
 		LIMIT 3
 	`
@@ -175,7 +175,7 @@ func (r *ProblemRepository) GetTestCases(problemID int64) ([]models.TestCase, er
 	query := `
 		SELECT id, input, expected_output, description, is_sample
 		FROM test_cases
-		WHERE problem_id = $1
+		WHERE problem_id = ?
 		ORDER BY display_order, id
 	`
 
@@ -210,17 +210,19 @@ func (r *ProblemRepository) Create(req *models.CreateProblemRequest, createdBy i
 	defer tx.Rollback()
 
 	// 插入题目
-	var problemID int64
 	query := `
 		INSERT INTO problems (title, difficulty, description, input_format, 
 		                      output_format, constraints, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
-	err = tx.QueryRow(
+	result, err := tx.Exec(
 		query, req.Title, req.Difficulty, req.Description,
 		req.InputFormat, req.OutputFormat, req.Constraints, createdBy,
-	).Scan(&problemID)
+	)
+	if err != nil {
+		return 0, err
+	}
+	problemID, err := result.LastInsertId()
 	if err != nil {
 		return 0, err
 	}
@@ -229,7 +231,7 @@ func (r *ProblemRepository) Create(req *models.CreateProblemRequest, createdBy i
 	if len(req.Tags) > 0 {
 		for _, tag := range req.Tags {
 			_, err = tx.Exec(
-				`INSERT INTO problem_tags (problem_id, tag) VALUES ($1, $2)`,
+				`INSERT INTO problem_tags (problem_id, tag) VALUES (?, ?)`,
 				problemID, tag,
 			)
 			if err != nil {
@@ -243,7 +245,7 @@ func (r *ProblemRepository) Create(req *models.CreateProblemRequest, createdBy i
 		for i, ex := range req.Examples {
 			_, err = tx.Exec(
 				`INSERT INTO problem_examples (problem_id, input, output, explanation, display_order) 
-				 VALUES ($1, $2, $3, $4, $5)`,
+				 VALUES (?, ?, ?, ?, ?)`,
 				problemID, ex.Input, ex.Output, ex.Explanation, i,
 			)
 			if err != nil {
@@ -257,7 +259,7 @@ func (r *ProblemRepository) Create(req *models.CreateProblemRequest, createdBy i
 		for i, tc := range req.TestCases {
 			_, err = tx.Exec(
 				`INSERT INTO test_cases (problem_id, input, expected_output, description, is_sample, display_order) 
-				 VALUES ($1, $2, $3, $4, $5, $6)`,
+				 VALUES (?, ?, ?, ?, ?, ?)`,
 				problemID, tc.Input, tc.ExpectedOutput, tc.Description, tc.IsSample, i,
 			)
 			if err != nil {
@@ -284,9 +286,9 @@ func (r *ProblemRepository) Update(id int64, req *models.CreateProblemRequest) e
 	// 更新题目基本信息
 	query := `
 		UPDATE problems 
-		SET title = $1, difficulty = $2, description = $3, input_format = $4,
-		    output_format = $5, constraints = $6, updated_at = $7
-		WHERE id = $8
+		SET title = ?, difficulty = ?, description = ?, input_format = ?,
+		    output_format = ?, constraints = ?, updated_at = ?
+		WHERE id = ?
 	`
 	_, err = tx.Exec(
 		query, req.Title, req.Difficulty, req.Description,
@@ -298,13 +300,13 @@ func (r *ProblemRepository) Update(id int64, req *models.CreateProblemRequest) e
 	}
 
 	// 删除旧标签并插入新标签
-	_, err = tx.Exec(`DELETE FROM problem_tags WHERE problem_id = $1`, id)
+	_, err = tx.Exec(`DELETE FROM problem_tags WHERE problem_id = ?`, id)
 	if err != nil {
 		return err
 	}
 	for _, tag := range req.Tags {
 		_, err = tx.Exec(
-			`INSERT INTO problem_tags (problem_id, tag) VALUES ($1, $2)`,
+			`INSERT INTO problem_tags (problem_id, tag) VALUES (?, ?)`,
 			id, tag,
 		)
 		if err != nil {
@@ -313,14 +315,14 @@ func (r *ProblemRepository) Update(id int64, req *models.CreateProblemRequest) e
 	}
 
 	// 删除旧示例并插入新示例
-	_, err = tx.Exec(`DELETE FROM problem_examples WHERE problem_id = $1`, id)
+	_, err = tx.Exec(`DELETE FROM problem_examples WHERE problem_id = ?`, id)
 	if err != nil {
 		return err
 	}
 	for i, ex := range req.Examples {
 		_, err = tx.Exec(
 			`INSERT INTO problem_examples (problem_id, input, output, explanation, display_order) 
-			 VALUES ($1, $2, $3, $4, $5)`,
+			 VALUES (?, ?, ?, ?, ?)`,
 			id, ex.Input, ex.Output, ex.Explanation, i,
 		)
 		if err != nil {
@@ -329,14 +331,14 @@ func (r *ProblemRepository) Update(id int64, req *models.CreateProblemRequest) e
 	}
 
 	// 删除旧测试用例并插入新测试用例
-	_, err = tx.Exec(`DELETE FROM test_cases WHERE problem_id = $1`, id)
+	_, err = tx.Exec(`DELETE FROM test_cases WHERE problem_id = ?`, id)
 	if err != nil {
 		return err
 	}
 	for i, tc := range req.TestCases {
 		_, err = tx.Exec(
 			`INSERT INTO test_cases (problem_id, input, expected_output, description, is_sample, display_order) 
-			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			 VALUES (?, ?, ?, ?, ?, ?)`,
 			id, tc.Input, tc.ExpectedOutput, tc.Description, tc.IsSample, i,
 		)
 		if err != nil {
@@ -349,7 +351,7 @@ func (r *ProblemRepository) Update(id int64, req *models.CreateProblemRequest) e
 
 // Delete 删除题目
 func (r *ProblemRepository) Delete(id int64) error {
-	query := `DELETE FROM problems WHERE id = $1`
+	query := `DELETE FROM problems WHERE id = ?`
 	result, err := r.db.Exec(query, id)
 	if err != nil {
 		return err
