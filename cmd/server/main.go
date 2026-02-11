@@ -3,13 +3,14 @@ package main
 import (
 	"log"
 
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
+	"github.com/daiXXXXX/programming-backend/internal/auth"
 	"github.com/daiXXXXX/programming-backend/internal/config"
 	"github.com/daiXXXXX/programming-backend/internal/database"
 	"github.com/daiXXXXX/programming-backend/internal/evaluator"
 	"github.com/daiXXXXX/programming-backend/internal/handlers"
 	"github.com/daiXXXXX/programming-backend/internal/middleware"
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -29,6 +30,10 @@ func main() {
 	// 初始化仓库
 	problemRepo := database.NewProblemRepository(db)
 	submissionRepo := database.NewSubmissionRepository(db)
+	userRepo := database.NewUserRepository(db)
+
+	// 初始化JWT管理器
+	jwtManager := auth.NewJWTManager(cfg.JWT.Secret)
 
 	// 初始化评测器
 	eval := evaluator.NewEvaluator(cfg.Executor.Timeout)
@@ -36,6 +41,7 @@ func main() {
 	// 初始化处理器
 	problemHandler := handlers.NewProblemHandler(problemRepo)
 	submissionHandler := handlers.NewSubmissionHandler(submissionRepo, problemRepo, eval)
+	authHandler := handlers.NewAuthHandler(userRepo, jwtManager)
 
 	// 创建路由
 	router := gin.Default()
@@ -63,18 +69,43 @@ func main() {
 	// API 路由组
 	api := router.Group("/api")
 	{
-		// 题目相关路由
+		// 认证相关路由（公开）
+		authRoutes := api.Group("/auth")
+		{
+			authRoutes.POST("/register", authHandler.Register)
+			authRoutes.POST("/login", authHandler.Login)
+			authRoutes.POST("/refresh", authHandler.RefreshToken)
+		}
+
+		// 认证相关路由（需要登录）
+		authProtected := api.Group("/auth")
+		authProtected.Use(middleware.AuthMiddleware(jwtManager))
+		{
+			authProtected.GET("/me", authHandler.GetCurrentUser)
+			authProtected.PUT("/password", authHandler.ChangePassword)
+		}
+
+		// 题目相关路由（公开读取）
 		problems := api.Group("/problems")
+		problems.Use(middleware.OptionalAuthMiddleware(jwtManager))
 		{
 			problems.GET("", problemHandler.GetProblems)
 			problems.GET("/:id", problemHandler.GetProblem)
-			problems.POST("", problemHandler.CreateProblem)
-			problems.PUT("/:id", problemHandler.UpdateProblem)
-			problems.DELETE("/:id", problemHandler.DeleteProblem)
 		}
 
-		// 提交相关路由
+		// 题目管理路由（需要教师权限）
+		problemsAdmin := api.Group("/problems")
+		problemsAdmin.Use(middleware.AuthMiddleware(jwtManager))
+		problemsAdmin.Use(middleware.InstructorOnly())
+		{
+			problemsAdmin.POST("", problemHandler.CreateProblem)
+			problemsAdmin.PUT("/:id", problemHandler.UpdateProblem)
+			problemsAdmin.DELETE("/:id", problemHandler.DeleteProblem)
+		}
+
+		// 提交相关路由（需要登录）
 		submissions := api.Group("/submissions")
+		submissions.Use(middleware.AuthMiddleware(jwtManager))
 		{
 			submissions.POST("", submissionHandler.SubmitCode)
 			submissions.GET("/:id", submissionHandler.GetSubmission)
@@ -82,8 +113,9 @@ func main() {
 			submissions.GET("/problem/:problemId", submissionHandler.GetProblemSubmissions)
 		}
 
-		// 统计相关路由
+		// 统计相关路由（需要登录）
 		stats := api.Group("/stats")
+		stats.Use(middleware.AuthMiddleware(jwtManager))
 		{
 			stats.GET("/user/:userId", submissionHandler.GetUserStats)
 		}
