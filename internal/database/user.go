@@ -185,3 +185,66 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+// GetTotalSolvedRanking 获取总刷题数排行榜
+func (r *UserRepository) GetTotalSolvedRanking(limit int) ([]models.RankingUser, error) {
+	query := `
+		SELECT u.id, u.username, COALESCE(u.avatar, '') as avatar, 
+		       COALESCE(s.total_solved, 0) as total_solved,
+		       COALESCE(s.today_solved, 0) as today_solved
+		FROM users u
+		LEFT JOIN user_stats s ON u.id = s.user_id
+		ORDER BY s.total_solved DESC, u.id ASC
+		LIMIT ?
+	`
+	rows, err := r.db.Query(query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []models.RankingUser
+	rank := 1
+	for rows.Next() {
+		var user models.RankingUser
+		if err := rows.Scan(&user.UserID, &user.Username, &user.Avatar, &user.TotalSolved, &user.TodaySolved); err != nil {
+			return nil, err
+		}
+		user.Rank = rank
+		rank++
+		users = append(users, user)
+	}
+	return users, nil
+}
+
+// GetTodaySolvedRanking 获取今日刷题数排行榜
+func (r *UserRepository) GetTodaySolvedRanking(limit int) ([]models.RankingUser, error) {
+	query := `
+		SELECT u.id, u.username, COALESCE(u.avatar, '') as avatar, 
+		       COALESCE(s.total_solved, 0) as total_solved,
+		       COALESCE(s.today_solved, 0) as today_solved
+		FROM users u
+		LEFT JOIN user_stats s ON u.id = s.user_id
+		WHERE s.today_date = CURDATE()
+		ORDER BY s.today_solved DESC, u.id ASC
+		LIMIT ?
+	`
+	rows, err := r.db.Query(query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []models.RankingUser
+	rank := 1
+	for rows.Next() {
+		var user models.RankingUser
+		if err := rows.Scan(&user.UserID, &user.Username, &user.Avatar, &user.TotalSolved, &user.TodaySolved); err != nil {
+			return nil, err
+		}
+		user.Rank = rank
+		rank++
+		users = append(users, user)
+	}
+	return users, nil
+}
