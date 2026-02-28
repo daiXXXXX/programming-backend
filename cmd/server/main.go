@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"strings"
 
 	"github.com/daiXXXXX/programming-backend/internal/auth"
 	"github.com/daiXXXXX/programming-backend/internal/config"
@@ -49,7 +50,12 @@ func main() {
 
 	// 配置 CORS
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     cfg.CORS.AllowedOrigins,
+		AllowOriginFunc: func(origin string) bool {
+			return strings.HasPrefix(origin, "http://localhost:") ||
+				strings.HasPrefix(origin, "https://localhost:") ||
+				origin == "http://localhost" ||
+				origin == "https://localhost"
+		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
