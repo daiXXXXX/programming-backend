@@ -112,6 +112,8 @@ type User struct {
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"` // 不在 JSON 中返回
 	Role         string    `json:"role"`
+	Avatar       string    `json:"avatar"`
+	Bio          string    `json:"bio"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 }

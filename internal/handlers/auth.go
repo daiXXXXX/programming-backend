@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -58,6 +61,8 @@ type UserDTO struct {
 	Username  string    `json:"username"`
 	Email     string    `json:"email"`
 	Role      string    `json:"role"`
+	Avatar    string    `json:"avatar"`
+	Bio       string    `json:"bio"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -202,6 +207,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			Username:  user.Username,
 			Email:     user.Email,
 			Role:      user.Role,
+			Avatar:    user.Avatar,
+			Bio:       user.Bio,
 			CreatedAt: user.CreatedAt,
 		},
 		AccessToken:  tokenPair.AccessToken,
@@ -287,6 +294,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			Username:  user.Username,
 			Email:     user.Email,
 			Role:      user.Role,
+			Avatar:    user.Avatar,
+			Bio:       user.Bio,
 			CreatedAt: user.CreatedAt,
 		},
 		AccessToken:  tokenPair.AccessToken,
@@ -342,6 +351,8 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 			Username:  user.Username,
 			Email:     user.Email,
 			Role:      user.Role,
+			Avatar:    user.Avatar,
+			Bio:       user.Bio,
 			CreatedAt: user.CreatedAt,
 		},
 		AccessToken:  tokenPair.AccessToken,
@@ -384,6 +395,8 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		Username:  user.Username,
 		Email:     user.Email,
 		Role:      user.Role,
+		Avatar:    user.Avatar,
+		Bio:       user.Bio,
 		CreatedAt: user.CreatedAt,
 	})
 }
@@ -464,6 +477,216 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Password updated successfully",
+	})
+}
+
+// UpdateProfileRequest 更新个人信息请求
+type UpdateProfileRequest struct {
+	Username string `json:"username" binding:"required,min=3,max=50"`
+	Email    string `json:"email" binding:"required,email"`
+	Avatar   string `json:"avatar" binding:"max=500"`
+	Bio      string `json:"bio" binding:"max=500"`
+}
+
+// UpdateProfile 更新个人信息
+func (h *AuthHandler) UpdateProfile(c *gin.Context) {
+	var req UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "validation_error",
+			"message": "Invalid request data",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	userID, _ := c.Get("userID")
+	user, err := h.userRepo.GetByID(userID.(int64))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "user_not_found",
+			"message": "User not found",
+		})
+		return
+	}
+
+	// 验证用户名格式
+	if !isValidUsername(req.Username) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "invalid_username",
+			"message": "Username can only contain letters, numbers, and underscores",
+		})
+		return
+	}
+
+	// 检查用户名是否被其他人占用
+	if req.Username != user.Username {
+		exists, err := h.userRepo.ExistsByUsername(req.Username)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "server_error",
+				"message": "Failed to check username availability",
+			})
+			return
+		}
+		if exists {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":   "username_exists",
+				"message": "Username already taken",
+			})
+			return
+		}
+	}
+
+	// 检查邮箱是否被其他人占用
+	newEmail := strings.ToLower(req.Email)
+	if newEmail != user.Email {
+		exists, err := h.userRepo.ExistsByEmail(newEmail)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "server_error",
+				"message": "Failed to check email availability",
+			})
+			return
+		}
+		if exists {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":   "email_exists",
+				"message": "Email already registered",
+			})
+			return
+		}
+	}
+
+	// 更新用户信息
+	if err := h.userRepo.UpdateProfile(user.ID, req.Username, newEmail, req.Avatar, req.Bio); err != nil {
+		if err == database.ErrUserAlreadyExists {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":   "user_exists",
+				"message": "Username or email already in use",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "server_error",
+			"message": "Failed to update profile",
+		})
+		return
+	}
+
+	// 获取更新后的用户信息
+	updatedUser, err := h.userRepo.GetByID(user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "server_error",
+			"message": "Failed to retrieve updated profile",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, UserDTO{
+		ID:        updatedUser.ID,
+		Username:  updatedUser.Username,
+		Email:     updatedUser.Email,
+		Role:      updatedUser.Role,
+		Avatar:    updatedUser.Avatar,
+		Bio:       updatedUser.Bio,
+		CreatedAt: updatedUser.CreatedAt,
+	})
+}
+
+// UploadAvatar 上传头像
+// @Summary 上传用户头像
+// @Description 上传用户头像图片文件
+// @Tags auth
+// @Security BearerAuth
+// @Accept multipart/form-data
+// @Produce json
+// @Param avatar formance file true "头像图片文件"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Router /api/auth/avatar [post]
+func (h *AuthHandler) UploadAvatar(c *gin.Context) {
+	userID, _ := c.Get("userID")
+
+	// 获取上传文件
+	file, err := c.FormFile("avatar")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "no_file",
+			"message": "No avatar file uploaded",
+		})
+		return
+	}
+
+	// 验证文件大小 (最大2MB)
+	if file.Size > 2*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "file_too_large",
+			"message": "Avatar file size must be less than 2MB",
+		})
+		return
+	}
+
+	// 验证文件类型
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	allowedExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true}
+	if !allowedExts[ext] {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "invalid_file_type",
+			"message": "Only jpg, jpeg, png, gif, webp files are allowed",
+		})
+		return
+	}
+
+	// 确保上传目录存在
+	uploadDir := "uploads/avatars"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "server_error",
+			"message": "Failed to create upload directory",
+		})
+		return
+	}
+
+	// 生成唯一文件名
+	filename := fmt.Sprintf("%d_%d%s", userID.(int64), time.Now().UnixNano(), ext)
+	filePath := filepath.Join(uploadDir, filename)
+
+	// 保存文件
+	if err := c.SaveUploadedFile(file, filePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "server_error",
+			"message": "Failed to save avatar file",
+		})
+		return
+	}
+
+	// 生成访问URL
+	avatarURL := "/uploads/avatars/" + filename
+
+	// 获取用户信息并删除旧头像文件
+	user, err := h.userRepo.GetByID(userID.(int64))
+	if err == nil && user.Avatar != "" && strings.HasPrefix(user.Avatar, "/uploads/avatars/") {
+		oldPath := "." + user.Avatar
+		os.Remove(oldPath) // 忽略错误，旧文件可能不存在
+	}
+
+	// 更新数据库中的头像URL
+	if err := h.userRepo.UpdateAvatar(userID.(int64), avatarURL); err != nil {
+		// 删除已上传的文件
+		os.Remove(filePath)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "server_error",
+			"message": "Failed to update avatar",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"avatar":  avatarURL,
+		"message": "Avatar uploaded successfully",
 	})
 }
 

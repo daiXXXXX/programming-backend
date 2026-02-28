@@ -54,7 +54,7 @@ func (r *UserRepository) Create(user *models.User) error {
 // GetByID 根据ID获取用户
 func (r *UserRepository) GetByID(id int64) (*models.User, error) {
 	query := `
-		SELECT id, username, email, password_hash, role, created_at, updated_at
+		SELECT id, username, email, password_hash, role, COALESCE(avatar, '') as avatar, COALESCE(bio, '') as bio, created_at, updated_at
 		FROM users
 		WHERE id = ?
 	`
@@ -65,6 +65,8 @@ func (r *UserRepository) GetByID(id int64) (*models.User, error) {
 		&user.Email,
 		&user.PasswordHash,
 		&user.Role,
+		&user.Avatar,
+		&user.Bio,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -80,7 +82,7 @@ func (r *UserRepository) GetByID(id int64) (*models.User, error) {
 // GetByUsername 根据用户名获取用户
 func (r *UserRepository) GetByUsername(username string) (*models.User, error) {
 	query := `
-		SELECT id, username, email, password_hash, role, created_at, updated_at
+		SELECT id, username, email, password_hash, role, COALESCE(avatar, '') as avatar, COALESCE(bio, '') as bio, created_at, updated_at
 		FROM users
 		WHERE username = ?
 	`
@@ -91,6 +93,8 @@ func (r *UserRepository) GetByUsername(username string) (*models.User, error) {
 		&user.Email,
 		&user.PasswordHash,
 		&user.Role,
+		&user.Avatar,
+		&user.Bio,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -106,7 +110,7 @@ func (r *UserRepository) GetByUsername(username string) (*models.User, error) {
 // GetByEmail 根据邮箱获取用户
 func (r *UserRepository) GetByEmail(email string) (*models.User, error) {
 	query := `
-		SELECT id, username, email, password_hash, role, created_at, updated_at
+		SELECT id, username, email, password_hash, role, COALESCE(avatar, '') as avatar, COALESCE(bio, '') as bio, created_at, updated_at
 		FROM users
 		WHERE email = ?
 	`
@@ -117,6 +121,8 @@ func (r *UserRepository) GetByEmail(email string) (*models.User, error) {
 		&user.Email,
 		&user.PasswordHash,
 		&user.Role,
+		&user.Avatar,
+		&user.Bio,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -140,6 +146,26 @@ func (r *UserRepository) UpdatePassword(userID int64, passwordHash string) error
 func (r *UserRepository) UpdateRole(userID int64, role string) error {
 	query := `UPDATE users SET role = ?, updated_at = ? WHERE id = ?`
 	_, err := r.db.Exec(query, role, time.Now(), userID)
+	return err
+}
+
+// UpdateProfile 更新用户个人信息
+func (r *UserRepository) UpdateProfile(userID int64, username, email, avatar, bio string) error {
+	query := `UPDATE users SET username = ?, email = ?, avatar = ?, bio = ?, updated_at = ? WHERE id = ?`
+	_, err := r.db.Exec(query, username, email, avatar, bio, time.Now(), userID)
+	if err != nil {
+		if isDuplicateKeyError(err) {
+			return ErrUserAlreadyExists
+		}
+		return err
+	}
+	return nil
+}
+
+// UpdateAvatar 更新用户头像
+func (r *UserRepository) UpdateAvatar(userID int64, avatar string) error {
+	query := `UPDATE users SET avatar = ?, updated_at = ? WHERE id = ?`
+	_, err := r.db.Exec(query, avatar, time.Now(), userID)
 	return err
 }
 

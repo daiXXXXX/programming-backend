@@ -66,6 +66,9 @@ func main() {
 	router.Use(middleware.Logger())
 	router.Use(middleware.Recovery())
 
+	// 静态文件服务 - 提供上传文件访问
+	router.Static("/uploads", "./uploads")
+
 	// 健康检查
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
@@ -88,8 +91,10 @@ func main() {
 		authProtected := api.Group("/auth")
 		authProtected.Use(middleware.AuthMiddleware(jwtManager))
 		{
-			authProtected.GET("/me", authHandler.GetCurrentUser)
-			authProtected.PUT("/password", authHandler.ChangePassword)
+		authProtected.GET("/me", authHandler.GetCurrentUser)
+		authProtected.PUT("/password", authHandler.ChangePassword)
+		authProtected.PUT("/profile", authHandler.UpdateProfile)
+		authProtected.POST("/avatar", authHandler.UploadAvatar)
 		}
 
 		// 题目相关路由（公开读取）
