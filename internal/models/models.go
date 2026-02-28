@@ -69,15 +69,15 @@ type Submission struct {
 
 // TestResult 测试结果
 type TestResult struct {
-	ID            int64  `json:"id,omitempty"`
-	SubmissionID  int64  `json:"submissionId,omitempty"`
-	TestCaseID    int64  `json:"testCaseId"`
-	Passed        bool   `json:"passed"`
-	Input         string `json:"input"`
+	ID             int64  `json:"id,omitempty"`
+	SubmissionID   int64  `json:"submissionId,omitempty"`
+	TestCaseID     int64  `json:"testCaseId"`
+	Passed         bool   `json:"passed"`
+	Input          string `json:"input"`
 	ExpectedOutput string `json:"expectedOutput"`
-	ActualOutput  string `json:"actualOutput,omitempty"`
-	Error         string `json:"error,omitempty"`
-	ExecutionTime int    `json:"executionTime,omitempty"` // 毫秒
+	ActualOutput   string `json:"actualOutput,omitempty"`
+	Error          string `json:"error,omitempty"`
+	ExecutionTime  int    `json:"executionTime,omitempty"` // 毫秒
 }
 
 // UserStats 用户统计
@@ -89,8 +89,20 @@ type UserStats struct {
 	HardSolved          int       `json:"hardSolved"`
 	TotalSubmissions    int       `json:"totalSubmissions"`
 	AcceptedSubmissions int       `json:"acceptedSubmissions"`
+	TodaySolved         int       `json:"todaySolved"`
+	TodayDate           string    `json:"todayDate,omitempty"`
 	SuccessRate         float64   `json:"successRate"`
 	UpdatedAt           time.Time `json:"updatedAt"`
+}
+
+// RankingUser 排行榜用户信息
+type RankingUser struct {
+	UserID      int64  `json:"userId"`
+	Username    string `json:"username"`
+	Avatar      string `json:"avatar"`
+	TotalSolved int    `json:"totalSolved"`
+	TodaySolved int    `json:"todaySolved"`
+	Rank        int    `json:"rank"`
 }
 
 // User 用户（简化版，后续可扩展）

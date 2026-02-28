@@ -42,6 +42,7 @@ func main() {
 	problemHandler := handlers.NewProblemHandler(problemRepo)
 	submissionHandler := handlers.NewSubmissionHandler(submissionRepo, problemRepo, eval)
 	authHandler := handlers.NewAuthHandler(userRepo, jwtManager)
+	rankingHandler := handlers.NewRankingHandler(userRepo)
 
 	// 创建路由
 	router := gin.Default()
@@ -118,6 +119,13 @@ func main() {
 		stats.Use(middleware.AuthMiddleware(jwtManager))
 		{
 			stats.GET("/user/:userId", submissionHandler.GetUserStats)
+		}
+
+		// 排行榜路由（公开）
+		ranking := api.Group("/ranking")
+		{
+			ranking.GET("/total", rankingHandler.GetTotalSolvedRanking)
+			ranking.GET("/today", rankingHandler.GetTodaySolvedRanking)
 		}
 	}
 
