@@ -54,7 +54,7 @@ func (h *SubmissionHandler) SubmitCode(c *gin.Context) {
 	}
 
 	// 评测代码
-	testResults := h.evaluator.EvaluateCode(req.Code, problem.TestCases)
+	testResults := h.evaluator.EvaluateCode(req.Code, req.Language, problem.TestCases)
 	score := h.evaluator.CalculateScore(testResults)
 	status := h.evaluator.GetSubmissionStatus(testResults)
 

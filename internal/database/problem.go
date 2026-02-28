@@ -17,16 +17,29 @@ func NewProblemRepository(db *DB) *ProblemRepository {
 	return &ProblemRepository{db: db}
 }
 
-// GetAll 获取所有题目（不包含测试用例详情）
-func (r *ProblemRepository) GetAll() ([]models.Problem, error) {
-	query := `
-		SELECT id, title, difficulty, description, input_format, output_format, 
-		       constraints, created_at, updated_at
-		FROM problems
-		ORDER BY id ASC
-	`
+// GetAll 获取所有题目（不包含测试用例详情），支持按标题模糊搜索
+func (r *ProblemRepository) GetAll(name string) ([]models.Problem, error) {
+	var rows *sql.Rows
+	var err error
 
-	rows, err := r.db.Query(query)
+	if name != "" {
+		query := `
+			SELECT id, title, difficulty, description, input_format, output_format, 
+			       constraints_text, created_at, updated_at
+			FROM problems
+			WHERE title LIKE ?
+			ORDER BY id ASC
+		`
+		rows, err = r.db.Query(query, "%"+name+"%")
+	} else {
+		query := `
+			SELECT id, title, difficulty, description, input_format, output_format, 
+			       constraints_text, created_at, updated_at
+			FROM problems
+			ORDER BY id ASC
+		`
+		rows, err = r.db.Query(query)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +74,7 @@ func (r *ProblemRepository) GetAll() ([]models.Problem, error) {
 func (r *ProblemRepository) GetByID(id int64) (*models.Problem, error) {
 	query := `
 		SELECT id, title, difficulty, description, input_format, output_format, 
-		       constraints, created_at, updated_at
+		       constraints_text, created_at, updated_at
 		FROM problems
 		WHERE id = ?
 	`
@@ -212,7 +225,7 @@ func (r *ProblemRepository) Create(req *models.CreateProblemRequest, createdBy i
 	// 插入题目
 	query := `
 		INSERT INTO problems (title, difficulty, description, input_format, 
-		                      output_format, constraints, created_by)
+		                      output_format, constraints_text, created_by)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
 	result, err := tx.Exec(
@@ -287,7 +300,7 @@ func (r *ProblemRepository) Update(id int64, req *models.CreateProblemRequest) e
 	query := `
 		UPDATE problems 
 		SET title = ?, difficulty = ?, description = ?, input_format = ?,
-		    output_format = ?, constraints = ?, updated_at = ?
+		    output_format = ?, constraints_text = ?, updated_at = ?
 		WHERE id = ?
 	`
 	_, err = tx.Exec(

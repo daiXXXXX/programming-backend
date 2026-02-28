@@ -17,10 +17,11 @@ func NewProblemHandler(repo *database.ProblemRepository) *ProblemHandler {
 	return &ProblemHandler{repo: repo}
 }
 
-// GetProblems 获取所有题目
-// GET /api/problems
+// GetProblems 获取所有题目（支持按名称模糊搜索）
+// GET /api/problems?name=xxx
 func (h *ProblemHandler) GetProblems(c *gin.Context) {
-	problems, err := h.repo.GetAll()
+	name := c.Query("name")
+	problems, err := h.repo.GetAll(name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to fetch problems",
