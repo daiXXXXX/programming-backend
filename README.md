@@ -18,6 +18,8 @@ programming-backend/
 │   └── server/          # 主程序入口
 │       └── main.go
 ├── internal/
+│   ├── auth/            # 认证工具
+│   │   └── jwt.go
 │   ├── config/          # 配置管理
 │   │   └── config.go
 │   ├── models/          # 数据模型
@@ -25,9 +27,12 @@ programming-backend/
 │   ├── database/        # 数据库连接和操作
 │   │   ├── database.go
 │   │   ├── problem.go
-│   │   └── submission.go
+│   │   ├── submission.go
+│   │   └── user.go
 │   ├── handlers/        # HTTP 处理器
+│   │   ├── auth.go
 │   │   ├── problem.go
+│   │   ├── ranking.go
 │   │   └── submission.go
 │   ├── middleware/      # 中间件
 │   │   └── middleware.go
@@ -36,6 +41,8 @@ programming-backend/
 ├── database/
 │   ├── schema.sql       # 数据库表结构
 │   └── seed.sql         # 初始数据
+├── uploads/
+│   └── avatars/         # 用户头像上传目录
 ├── Makefile             # 构建和管理脚本
 ├── go.mod               # Go 模块依赖
 ├── .env.example         # 环境变量示例
