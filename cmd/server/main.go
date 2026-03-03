@@ -32,6 +32,7 @@ func main() {
 	problemRepo := database.NewProblemRepository(db)
 	submissionRepo := database.NewSubmissionRepository(db)
 	userRepo := database.NewUserRepository(db)
+	classRepo := database.NewClassRepository(db)
 
 	// 初始化JWT管理器
 	jwtManager := auth.NewJWTManager(cfg.JWT.Secret)
@@ -44,6 +45,7 @@ func main() {
 	submissionHandler := handlers.NewSubmissionHandler(submissionRepo, problemRepo, eval)
 	authHandler := handlers.NewAuthHandler(userRepo, jwtManager)
 	rankingHandler := handlers.NewRankingHandler(userRepo)
+	managerHandler := handlers.NewManagerHandler(classRepo)
 
 	// 创建路由
 	router := gin.Default()
@@ -137,6 +139,16 @@ func main() {
 		{
 			ranking.GET("/total", rankingHandler.GetTotalSolvedRanking)
 			ranking.GET("/today", rankingHandler.GetTodaySolvedRanking)
+		}
+
+		// 后台管理路由（需要教师/管理员权限）
+		manager := api.Group("/manager")
+		manager.Use(middleware.AuthMiddleware(jwtManager))
+		manager.Use(middleware.InstructorOnly())
+		{
+			manager.GET("/my-classes", managerHandler.GetMyClasses)
+			manager.GET("/classes", managerHandler.GetAllClasses)
+			manager.GET("/classes/:id", managerHandler.GetClassDetail)
 		}
 	}
 
