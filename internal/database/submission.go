@@ -228,7 +228,7 @@ func (r *SubmissionRepository) getTestResults(submissionID int64) ([]models.Test
 func (r *SubmissionRepository) updateUserStats(tx *sql.Tx, userID int64) error {
 	query := `
 		INSERT INTO user_stats (user_id, total_solved, easy_solved, medium_solved, hard_solved, 
-		                        total_submissions, accepted_submissions)
+		                        total_submissions, accepted_submissions, today_solved, today_date)
 		SELECT 
 			?,
 			(SELECT COUNT(DISTINCT s.problem_id) FROM submissions s WHERE s.user_id = ? AND s.status = 'Accepted'),
@@ -236,7 +236,9 @@ func (r *SubmissionRepository) updateUserStats(tx *sql.Tx, userID int64) error {
 			(SELECT COUNT(DISTINCT s.problem_id) FROM submissions s JOIN problems p ON s.problem_id = p.id WHERE s.user_id = ? AND s.status = 'Accepted' AND p.difficulty = 'Medium'),
 			(SELECT COUNT(DISTINCT s.problem_id) FROM submissions s JOIN problems p ON s.problem_id = p.id WHERE s.user_id = ? AND s.status = 'Accepted' AND p.difficulty = 'Hard'),
 			(SELECT COUNT(*) FROM submissions WHERE user_id = ?),
-			(SELECT COUNT(*) FROM submissions WHERE user_id = ? AND status = 'Accepted')
+			(SELECT COUNT(*) FROM submissions WHERE user_id = ? AND status = 'Accepted'),
+			(SELECT COUNT(DISTINCT s.problem_id) FROM submissions s WHERE s.user_id = ? AND s.status = 'Accepted' AND DATE(s.submitted_at) = CURDATE()),
+			CURDATE()
 		ON DUPLICATE KEY UPDATE
 			total_solved = VALUES(total_solved),
 			easy_solved = VALUES(easy_solved),
@@ -244,10 +246,12 @@ func (r *SubmissionRepository) updateUserStats(tx *sql.Tx, userID int64) error {
 			hard_solved = VALUES(hard_solved),
 			total_submissions = VALUES(total_submissions),
 			accepted_submissions = VALUES(accepted_submissions),
+			today_solved = VALUES(today_solved),
+			today_date = CURDATE(),
 			updated_at = CURRENT_TIMESTAMP
 	`
 
-	_, err := tx.Exec(query, userID, userID, userID, userID, userID, userID, userID)
+	_, err := tx.Exec(query, userID, userID, userID, userID, userID, userID, userID, userID)
 	return err
 }
 
