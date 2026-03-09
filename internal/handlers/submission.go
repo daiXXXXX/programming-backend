@@ -39,10 +39,15 @@ func (h *SubmissionHandler) SubmitCode(c *gin.Context) {
 		return
 	}
 
-	// TODO: 从 JWT 中获取用户ID
-	if req.UserID == 0 {
-		req.UserID = 1 // 默认用户ID
+	// 从 JWT 中间件获取用户ID（不信任前端传来的 userID）
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User not authenticated",
+		})
+		return
 	}
+	req.UserID = userIDVal.(int64)
 
 	// 获取题目和测试用例
 	problem, err := h.problemRepo.GetByID(req.ProblemID)
