@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/daiXXXXX/programming-backend/internal/database"
@@ -202,4 +203,41 @@ func (h *SubmissionHandler) GetUserStats(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, stats)
+}
+
+// GetDailyActivity 获取用户每日活动数据（热力图/绿墙）
+// GET /api/stats/user/:userId/activity?start=2025-01-01&end=2025-12-31
+func (h *SubmissionHandler) GetDailyActivity(c *gin.Context) {
+	userIDStr := c.Param("userId")
+	userID, err := strconv.ParseInt(userIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid user ID",
+		})
+		return
+	}
+
+	// 获取日期范围参数，默认最近365天
+	startDate := c.DefaultQuery("start", "")
+	endDate := c.DefaultQuery("end", "")
+
+	if startDate == "" || endDate == "" {
+		now := time.Now()
+		endDate = now.Format("2006-01-02")
+		startDate = now.AddDate(-1, 0, 0).Format("2006-01-02")
+	}
+
+	activities, err := h.submissionRepo.GetDailyActivity(userID, startDate, endDate)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to fetch daily activity",
+		})
+		return
+	}
+
+	if activities == nil {
+		activities = []models.DailyActivity{}
+	}
+
+	c.JSON(http.StatusOK, activities)
 }

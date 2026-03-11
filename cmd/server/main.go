@@ -132,6 +132,7 @@ func main() {
 		stats.Use(middleware.AuthMiddleware(jwtManager))
 		{
 			stats.GET("/user/:userId", submissionHandler.GetUserStats)
+			stats.GET("/user/:userId/activity", submissionHandler.GetDailyActivity)
 		}
 
 		// 排行榜路由（公开）

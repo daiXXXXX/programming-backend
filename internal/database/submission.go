@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/daiXXXXX/programming-backend/internal/models"
 )
@@ -67,6 +68,11 @@ func (r *SubmissionRepository) Create(submission *models.Submission) (int64, err
 
 	// 更新用户统计
 	if err = r.updateUserStats(tx, submission.UserID); err != nil {
+		return 0, err
+	}
+
+	// 更新每日活动统计
+	if err = r.updateDailyActivity(tx, submission.UserID); err != nil {
 		return 0, err
 	}
 
@@ -287,4 +293,52 @@ func (r *SubmissionRepository) GetUserStats(userID int64) (*models.UserStats, er
 	}
 
 	return &stats, nil
+}
+
+// updateDailyActivity 更新每日活动统计
+func (r *SubmissionRepository) updateDailyActivity(tx *sql.Tx, userID int64) error {
+	query := `
+		INSERT INTO daily_activity (user_id, activity_date, submission_count, solved_count)
+		SELECT 
+			?,
+			CURDATE(),
+			(SELECT COUNT(*) FROM submissions WHERE user_id = ? AND DATE(submitted_at) = CURDATE()),
+			(SELECT COUNT(DISTINCT problem_id) FROM submissions WHERE user_id = ? AND status = 'Accepted' AND DATE(submitted_at) = CURDATE())
+		ON DUPLICATE KEY UPDATE
+			submission_count = VALUES(submission_count),
+			solved_count = VALUES(solved_count),
+			updated_at = CURRENT_TIMESTAMP
+	`
+	_, err := tx.Exec(query, userID, userID, userID)
+	return err
+}
+
+// GetDailyActivity 获取用户指定日期范围内的每日活动数据
+func (r *SubmissionRepository) GetDailyActivity(userID int64, startDate, endDate string) ([]models.DailyActivity, error) {
+	query := `
+		SELECT user_id, activity_date, submission_count, solved_count
+		FROM daily_activity
+		WHERE user_id = ? AND activity_date >= ? AND activity_date <= ?
+		ORDER BY activity_date ASC
+	`
+
+	rows, err := r.db.Query(query, userID, startDate, endDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var activities []models.DailyActivity
+	for rows.Next() {
+		var a models.DailyActivity
+		var dateVal time.Time
+		err := rows.Scan(&a.UserID, &dateVal, &a.SubmissionCount, &a.SolvedCount)
+		if err != nil {
+			return nil, err
+		}
+		a.ActivityDate = dateVal.Format("2006-01-02")
+		activities = append(activities, a)
+	}
+
+	return activities, rows.Err()
 }

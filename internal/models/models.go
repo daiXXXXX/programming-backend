@@ -105,6 +105,14 @@ type RankingUser struct {
 	Rank        int    `json:"rank"`
 }
 
+// DailyActivity 每日刷题活动（用于热力图/绿墙）
+type DailyActivity struct {
+	UserID          int64  `json:"userId"`
+	ActivityDate    string `json:"date"`            // 格式: "2006-01-02"
+	SubmissionCount int    `json:"submissionCount"` // 当天提交次数
+	SolvedCount     int    `json:"solvedCount"`     // 当天解决题目数
+}
+
 // User 用户（简化版，后续可扩展）
 type User struct {
 	ID           int64     `json:"id"`
