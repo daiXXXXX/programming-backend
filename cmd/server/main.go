@@ -10,6 +10,7 @@ import (
 	"github.com/daiXXXXX/programming-backend/internal/evaluator"
 	"github.com/daiXXXXX/programming-backend/internal/handlers"
 	"github.com/daiXXXXX/programming-backend/internal/middleware"
+	"github.com/daiXXXXX/programming-backend/internal/ws"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -33,6 +34,7 @@ func main() {
 	submissionRepo := database.NewSubmissionRepository(db)
 	userRepo := database.NewUserRepository(db)
 	classRepo := database.NewClassRepository(db)
+	solutionRepo := database.NewSolutionRepository(db.DB)
 
 	// 初始化JWT管理器
 	jwtManager := auth.NewJWTManager(cfg.JWT.Secret)
@@ -40,12 +42,17 @@ func main() {
 	// 初始化评测器
 	eval := evaluator.NewEvaluator(cfg.Executor.Timeout)
 
+	// 初始化 WebSocket Hub
+	wsHub := ws.NewHub()
+	go wsHub.Run()
+
 	// 初始化处理器
 	problemHandler := handlers.NewProblemHandler(problemRepo)
 	submissionHandler := handlers.NewSubmissionHandler(submissionRepo, problemRepo, eval)
 	authHandler := handlers.NewAuthHandler(userRepo, jwtManager)
 	rankingHandler := handlers.NewRankingHandler(userRepo)
 	managerHandler := handlers.NewManagerHandler(classRepo)
+	solutionHandler := handlers.NewSolutionHandler(solutionRepo, wsHub)
 
 	// 创建路由
 	router := gin.Default()
@@ -151,6 +158,29 @@ func main() {
 			manager.GET("/classes", managerHandler.GetAllClasses)
 			manager.GET("/classes/:id", managerHandler.GetClassDetail)
 		}
+
+		// 题解相关路由（公开读取，需登录写入）
+		solutionsPublic := api.Group("/solutions")
+		solutionsPublic.Use(middleware.OptionalAuthMiddleware(jwtManager))
+		{
+			solutionsPublic.GET("/problem/:problemId", solutionHandler.GetSolutions)
+			solutionsPublic.GET("/:id", solutionHandler.GetSolution)
+			solutionsPublic.GET("/:id/comments", solutionHandler.GetComments)
+		}
+
+		solutionsAuth := api.Group("/solutions")
+		solutionsAuth.Use(middleware.AuthMiddleware(jwtManager))
+		{
+			solutionsAuth.POST("", solutionHandler.CreateSolution)
+			solutionsAuth.PUT("/:id", solutionHandler.UpdateSolution)
+			solutionsAuth.DELETE("/:id", solutionHandler.DeleteSolution)
+			solutionsAuth.POST("/:id/like", solutionHandler.ToggleLike)
+			solutionsAuth.POST("/:id/comments", solutionHandler.CreateComment)
+			solutionsAuth.DELETE("/comments/:commentId", solutionHandler.DeleteComment)
+		}
+
+		// WebSocket 路由（需要登录）
+		api.GET("/ws", middleware.AuthMiddleware(jwtManager), solutionHandler.HandleWebSocket)
 	}
 
 	// 启动服务器
