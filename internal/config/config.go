@@ -14,6 +14,7 @@ type Config struct {
 	Redis    RedisConfig
 	CORS     CORSConfig
 	JWT      JWTConfig
+	OpenAI   OpenAIConfig
 	Executor ExecutorConfig
 }
 
@@ -38,6 +39,14 @@ type JWTConfig struct {
 	Secret string
 }
 
+type OpenAIConfig struct {
+	APIKey           string
+	BaseURL          string
+	Model            string
+	ReasoningEffort  string
+	RequestTimeoutMS int
+}
+
 type RedisConfig struct {
 	Host     string
 	Port     string
@@ -60,6 +69,10 @@ func Load() *Config {
 	timeout, _ := strconv.Atoi(getEnv("CODE_EXECUTION_TIMEOUT", "5000"))
 	maxCodeLength, _ := strconv.Atoi(getEnv("MAX_CODE_LENGTH", "10000"))
 	redisDB, _ := strconv.Atoi(getEnv("REDIS_DB", "0"))
+	openAIRequestTimeoutMS, _ := strconv.Atoi(getEnv("OPENAI_REQUEST_TIMEOUT_MS", "45000"))
+	if openAIRequestTimeoutMS <= 0 {
+		openAIRequestTimeoutMS = 45000
+	}
 
 	return &Config{
 		Server: ServerConfig{
@@ -85,6 +98,13 @@ func Load() *Config {
 		},
 		JWT: JWTConfig{
 			Secret: getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
+		},
+		OpenAI: OpenAIConfig{
+			APIKey:           getEnv("OPENAI_API_KEY", ""),
+			BaseURL:          getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+			Model:            getEnv("OPENAI_MODEL", "gpt-5-mini"),
+			ReasoningEffort:  getEnv("OPENAI_REASONING_EFFORT", ""),
+			RequestTimeoutMS: openAIRequestTimeoutMS,
 		},
 		Executor: ExecutorConfig{
 			Timeout:       timeout,

@@ -4,6 +4,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/daiXXXXX/programming-backend/internal/ai"
 	"github.com/daiXXXXX/programming-backend/internal/auth"
 	"github.com/daiXXXXX/programming-backend/internal/cache"
 	"github.com/daiXXXXX/programming-backend/internal/config"
@@ -11,6 +12,7 @@ import (
 	"github.com/daiXXXXX/programming-backend/internal/evaluator"
 	"github.com/daiXXXXX/programming-backend/internal/handlers"
 	"github.com/daiXXXXX/programming-backend/internal/middleware"
+	"github.com/daiXXXXX/programming-backend/internal/plagiarism"
 	"github.com/daiXXXXX/programming-backend/internal/worker"
 	"github.com/daiXXXXX/programming-backend/internal/ws"
 	"github.com/gin-contrib/cors"
@@ -72,7 +74,9 @@ func main() {
 	submissionHandler := handlers.NewSubmissionHandler(submissionRepo, problemRepo, eval, redisCache)
 	authHandler := handlers.NewAuthHandler(userRepo, jwtManager)
 	rankingHandler := handlers.NewRankingHandler(userRepo, redisCache)
-	managerHandler := handlers.NewManagerHandler(classRepo)
+	openAIClient := ai.NewOpenAIClient(cfg.OpenAI)
+	plagiarismService := plagiarism.NewService(openAIClient)
+	managerHandler := handlers.NewManagerHandler(classRepo, problemRepo, plagiarismService)
 	solutionHandler := handlers.NewSolutionHandler(solutionRepo, wsHub)
 
 	// 创建路由
@@ -178,6 +182,7 @@ func main() {
 			manager.GET("/my-classes", managerHandler.GetMyClasses)
 			manager.GET("/classes", managerHandler.GetAllClasses)
 			manager.GET("/classes/:id", managerHandler.GetClassDetail)
+			manager.POST("/classes/:id/plagiarism-check", managerHandler.CheckClassPlagiarism)
 		}
 
 		// 题解相关路由（公开读取，需登录写入）

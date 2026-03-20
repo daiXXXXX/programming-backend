@@ -3,6 +3,8 @@ package database
 import (
 	"database/sql"
 	"time"
+
+	"github.com/daiXXXXX/programming-backend/internal/models"
 )
 
 // ClassInfo 班级列表信息
@@ -294,6 +296,91 @@ func (r *ClassRepository) GetClassStudentProgress(classID int64) ([]StudentProgr
 		students = []StudentProgress{}
 	}
 	return students, nil
+}
+
+// GetRepresentativeProblemSubmissions returns one representative submission per student
+// for a problem inside a class. By default it prefers the latest accepted submission,
+// and falls back to the latest submission when a student has no accepted solution.
+func (r *ClassRepository) GetRepresentativeProblemSubmissions(classID, problemID int64, acceptedOnly bool) ([]models.ClassProblemSubmission, error) {
+	query := `
+		SELECT
+			s.id,
+			s.problem_id,
+			s.user_id,
+			u.username,
+			COALESCE(u.avatar, '') as avatar,
+			s.code,
+			s.language,
+			s.status,
+			s.score,
+			s.submitted_at
+		FROM class_students cs
+		JOIN users u ON cs.student_id = u.id
+		JOIN submissions s ON s.user_id = cs.student_id
+		WHERE cs.class_id = ? AND s.problem_id = ?
+	`
+	args := []interface{}{classID, problemID}
+
+	if acceptedOnly {
+		query += " AND s.status = 'Accepted'"
+	}
+
+	query += `
+		ORDER BY
+			s.user_id ASC,
+			CASE WHEN s.status = 'Accepted' THEN 0 ELSE 1 END ASC,
+			s.submitted_at DESC,
+			s.id DESC
+	`
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	selected := make(map[int64]struct{})
+	var submissions []models.ClassProblemSubmission
+
+	for rows.Next() {
+		var submission models.ClassProblemSubmission
+		var status string
+
+		if err := rows.Scan(
+			&submission.SubmissionID,
+			&submission.ProblemID,
+			&submission.UserID,
+			&submission.Username,
+			&submission.Avatar,
+			&submission.Code,
+			&submission.Language,
+			&status,
+			&submission.Score,
+			&submission.SubmittedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		if _, exists := selected[submission.UserID]; exists {
+			continue
+		}
+
+		submission.Status = models.SubmissionStatus(status)
+		if acceptedOnly || submission.Status == models.StatusAccepted {
+			submission.Selection = "latest_accepted"
+		} else {
+			submission.Selection = "latest_submission"
+		}
+
+		submissions = append(submissions, submission)
+		selected[submission.UserID] = struct{}{}
+	}
+
+	if submissions == nil {
+		submissions = []models.ClassProblemSubmission{}
+	}
+
+	return submissions, rows.Err()
 }
 
 // GetClassDetail 获取班级完整详情

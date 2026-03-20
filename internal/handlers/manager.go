@@ -1,120 +1,186 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/daiXXXXX/programming-backend/internal/auth"
 	"github.com/daiXXXXX/programming-backend/internal/database"
+	"github.com/daiXXXXX/programming-backend/internal/models"
+	"github.com/daiXXXXX/programming-backend/internal/plagiarism"
 	"github.com/gin-gonic/gin"
 )
 
-// ManagerHandler 后台管理处理器
+// ManagerHandler defines instructor/admin management endpoints.
 type ManagerHandler struct {
-	classRepo *database.ClassRepository
+	classRepo         *database.ClassRepository
+	problemRepo       *database.ProblemRepository
+	plagiarismService *plagiarism.Service
 }
 
-// NewManagerHandler 创建后台管理处理器
-func NewManagerHandler(classRepo *database.ClassRepository) *ManagerHandler {
+// NewManagerHandler creates the manager handler.
+func NewManagerHandler(
+	classRepo *database.ClassRepository,
+	problemRepo *database.ProblemRepository,
+	plagiarismService *plagiarism.Service,
+) *ManagerHandler {
 	return &ManagerHandler{
-		classRepo: classRepo,
+		classRepo:         classRepo,
+		problemRepo:       problemRepo,
+		plagiarismService: plagiarismService,
 	}
 }
 
-// GetMyClasses 获取当前教师的班级列表
+// GetMyClasses returns classes owned by the current instructor.
 // GET /api/manager/my-classes?search=keyword
 func (h *ManagerHandler) GetMyClasses(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
 		return
 	}
 
 	search := c.Query("search")
 	classes, err := h.classRepo.GetClassesByTeacher(userID.(int64), search)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取班级列表失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch classes"})
 		return
 	}
 
 	c.JSON(http.StatusOK, classes)
 }
 
-// GetAllClasses 获取所有班级列表（管理员）
+// GetAllClasses returns all classes for admins, or owned classes for instructors.
 // GET /api/manager/classes?search=keyword
 func (h *ManagerHandler) GetAllClasses(c *gin.Context) {
-	// 验证是否为管理员
 	role, exists := c.Get("role")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
 		return
 	}
 
+	search := c.Query("search")
 	userRole := role.(auth.UserRole)
 	if userRole == auth.RoleAdmin {
-		// 管理员：返回所有班级
-		search := c.Query("search")
 		classes, err := h.classRepo.GetAllClasses(search)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取班级列表失败"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch classes"})
 			return
 		}
 		c.JSON(http.StatusOK, classes)
-	} else {
-		// 教师：只返回自己的班级
-		userID, _ := c.Get("userID")
-		search := c.Query("search")
-		classes, err := h.classRepo.GetClassesByTeacher(userID.(int64), search)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取班级列表失败"})
-			return
-		}
-		c.JSON(http.StatusOK, classes)
+		return
 	}
+
+	userID, _ := c.Get("userID")
+	classes, err := h.classRepo.GetClassesByTeacher(userID.(int64), search)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch classes"})
+		return
+	}
+
+	c.JSON(http.StatusOK, classes)
 }
 
-// GetClassDetail 获取班级详情
+func (h *ManagerHandler) ensureClassAccess(c *gin.Context, classID int64) bool {
+	userID, userExists := c.Get("userID")
+	role, roleExists := c.Get("role")
+	if !userExists || !roleExists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
+		return false
+	}
+
+	classInfo, err := h.classRepo.GetClassByID(classID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch class info"})
+		return false
+	}
+	if classInfo == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Class not found"})
+		return false
+	}
+
+	userRole := role.(auth.UserRole)
+	if userRole != auth.RoleAdmin && classInfo.TeacherID != userID.(int64) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied"})
+		return false
+	}
+
+	return true
+}
+
+// GetClassDetail returns the full class detail for instructors/admins.
 // GET /api/manager/classes/:id
 func (h *ManagerHandler) GetClassDetail(c *gin.Context) {
 	classIDStr := c.Param("id")
 	classID, err := strconv.ParseInt(classIDStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的班级ID"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid class ID"})
 		return
 	}
 
-	// 获取用户信息
-	userID, _ := c.Get("userID")
-	role, _ := c.Get("role")
-	userRole := role.(auth.UserRole)
-
-	// 如果不是管理员，需要验证该班级属于当前教师
-	if userRole != auth.RoleAdmin {
-		classInfo, err := h.classRepo.GetClassByID(classID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取班级信息失败"})
-			return
-		}
-		if classInfo == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "班级不存在"})
-			return
-		}
-		if classInfo.TeacherID != userID.(int64) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "无权查看该班级"})
-			return
-		}
+	if !h.ensureClassAccess(c, classID) {
+		return
 	}
 
-	// 获取班级完整详情
 	detail, err := h.classRepo.GetClassDetail(classID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取班级详情失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch class detail"})
 		return
 	}
 	if detail == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "班级不存在"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Class not found"})
 		return
 	}
 
 	c.JSON(http.StatusOK, detail)
+}
+
+// CheckClassPlagiarism analyzes suspicious submissions inside a class for one problem.
+// POST /api/manager/classes/:id/plagiarism-check
+func (h *ManagerHandler) CheckClassPlagiarism(c *gin.Context) {
+	classIDStr := c.Param("id")
+	classID, err := strconv.ParseInt(classIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid class ID"})
+		return
+	}
+
+	if !h.ensureClassAccess(c, classID) {
+		return
+	}
+
+	var req models.PlagiarismCheckRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	problem, err := h.problemRepo.GetByID(req.ProblemID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Problem not found"})
+		return
+	}
+
+	submissions, err := h.classRepo.GetRepresentativeProblemSubmissions(classID, req.ProblemID, req.AcceptedOnly)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch class submissions"})
+		return
+	}
+
+	report, err := h.plagiarismService.CheckClassProblem(c.Request.Context(), classID, problem, req, submissions)
+	if err != nil {
+		if errors.Is(err, plagiarism.ErrAnalyzerNotConfigured) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":   "AI plagiarism analysis is not configured",
+				"message": "Set OPENAI_API_KEY before using the plagiarism check endpoint",
+			})
+			return
+		}
+
+		c.JSON(http.StatusBadGateway, gin.H{"error": "AI plagiarism analysis failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, report)
 }
