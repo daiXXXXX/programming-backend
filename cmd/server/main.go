@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/daiXXXXX/programming-backend/internal/auth"
+	"github.com/daiXXXXX/programming-backend/internal/cache"
 	"github.com/daiXXXXX/programming-backend/internal/config"
 	"github.com/daiXXXXX/programming-backend/internal/database"
 	"github.com/daiXXXXX/programming-backend/internal/evaluator"
@@ -29,6 +30,18 @@ func main() {
 	}
 	defer db.Close()
 
+	// 初始化 Redis 缓存（连接失败时自动降级为无缓存模式）
+	redisCache := cache.New(&cache.Config{
+		Host:     cfg.Redis.Host,
+		Port:     cfg.Redis.Port,
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+		Prefix:   cfg.Redis.Prefix,
+	})
+	if redisCache != nil {
+		defer redisCache.Close()
+	}
+
 	// 初始化仓库
 	problemRepo := database.NewProblemRepository(db)
 	submissionRepo := database.NewSubmissionRepository(db)
@@ -47,10 +60,10 @@ func main() {
 	go wsHub.Run()
 
 	// 初始化处理器
-	problemHandler := handlers.NewProblemHandler(problemRepo)
+	problemHandler := handlers.NewProblemHandler(problemRepo, redisCache)
 	submissionHandler := handlers.NewSubmissionHandler(submissionRepo, problemRepo, eval)
 	authHandler := handlers.NewAuthHandler(userRepo, jwtManager)
-	rankingHandler := handlers.NewRankingHandler(userRepo)
+	rankingHandler := handlers.NewRankingHandler(userRepo, redisCache)
 	managerHandler := handlers.NewManagerHandler(classRepo)
 	solutionHandler := handlers.NewSolutionHandler(solutionRepo, wsHub)
 
@@ -100,10 +113,10 @@ func main() {
 		authProtected := api.Group("/auth")
 		authProtected.Use(middleware.AuthMiddleware(jwtManager))
 		{
-		authProtected.GET("/me", authHandler.GetCurrentUser)
-		authProtected.PUT("/password", authHandler.ChangePassword)
-		authProtected.PUT("/profile", authHandler.UpdateProfile)
-		authProtected.POST("/avatar", authHandler.UploadAvatar)
+			authProtected.GET("/me", authHandler.GetCurrentUser)
+			authProtected.PUT("/password", authHandler.ChangePassword)
+			authProtected.PUT("/profile", authHandler.UpdateProfile)
+			authProtected.POST("/avatar", authHandler.UploadAvatar)
 		}
 
 		// 题目相关路由（公开读取）

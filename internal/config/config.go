@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
+	Redis    RedisConfig
 	CORS     CORSConfig
 	JWT      JWTConfig
 	Executor ExecutorConfig
@@ -37,6 +38,14 @@ type JWTConfig struct {
 	Secret string
 }
 
+type RedisConfig struct {
+	Host     string
+	Port     string
+	Password string
+	DB       int
+	Prefix   string
+}
+
 type ExecutorConfig struct {
 	Timeout       int
 	MaxCodeLength int
@@ -50,6 +59,7 @@ func Load() *Config {
 
 	timeout, _ := strconv.Atoi(getEnv("CODE_EXECUTION_TIMEOUT", "5000"))
 	maxCodeLength, _ := strconv.Atoi(getEnv("MAX_CODE_LENGTH", "10000"))
+	redisDB, _ := strconv.Atoi(getEnv("REDIS_DB", "0"))
 
 	return &Config{
 		Server: ServerConfig{
@@ -62,6 +72,13 @@ func Load() *Config {
 			User:     getEnv("DB_USER", "root"),
 			Password: getEnv("DB_PASSWORD", ""),
 			DBName:   getEnv("DB_NAME", "xfy_bs"),
+		},
+		Redis: RedisConfig{
+			Host:     getEnv("REDIS_HOST", "localhost"),
+			Port:     getEnv("REDIS_PORT", "6379"),
+			Password: getEnv("REDIS_PASSWORD", ""),
+			DB:       redisDB,
+			Prefix:   getEnv("REDIS_PREFIX", "oj"),
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: parseOrigins(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5000")),
