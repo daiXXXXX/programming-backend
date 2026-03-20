@@ -342,3 +342,78 @@ func (r *SubmissionRepository) GetDailyActivity(userID int64, startDate, endDate
 
 	return activities, rows.Err()
 }
+
+// CreatePending 创建一条 Pending 状态的提交记录（不含测试结果）
+func (r *SubmissionRepository) CreatePending(submission *models.Submission) (int64, error) {
+	query := `
+		INSERT INTO submissions (problem_id, user_id, code, language, status, score)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`
+	result, err := r.db.Exec(
+		query, submission.ProblemID, submission.UserID, submission.Code,
+		submission.Language, models.StatusPending, 0,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+// UpdateResult 评测完成后更新提交结果（状态、分数、测试结果、统计）
+func (r *SubmissionRepository) UpdateResult(submissionID int64, status models.SubmissionStatus, score int, testResults []models.TestResult) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 1. 更新提交状态和分数
+	_, err = tx.Exec(
+		`UPDATE submissions SET status = ?, score = ? WHERE id = ?`,
+		status, score, submissionID,
+	)
+	if err != nil {
+		return err
+	}
+
+	// 2. 插入测试结果
+	for _, result := range testResults {
+		var errorMsg sql.NullString
+		if result.Error != "" {
+			errorMsg = sql.NullString{String: result.Error, Valid: true}
+		}
+
+		var actualOutput sql.NullString
+		if result.ActualOutput != "" {
+			actualOutput = sql.NullString{String: result.ActualOutput, Valid: true}
+		}
+
+		_, err = tx.Exec(
+			`INSERT INTO test_results (submission_id, test_case_id, passed, actual_output, error_message, execution_time)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			submissionID, result.TestCaseID, result.Passed, actualOutput, errorMsg, result.ExecutionTime,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	// 3. 获取 user_id 以更新统计
+	var userID int64
+	err = tx.QueryRow(`SELECT user_id FROM submissions WHERE id = ?`, submissionID).Scan(&userID)
+	if err != nil {
+		return err
+	}
+
+	// 4. 更新用户统计
+	if err = r.updateUserStats(tx, userID); err != nil {
+		return err
+	}
+
+	// 5. 更新每日活动统计
+	if err = r.updateDailyActivity(tx, userID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}

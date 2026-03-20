@@ -119,6 +119,59 @@ func (c *Cache) Delete(ctx context.Context, keyParts ...string) {
 	}
 }
 
+// ==================== 队列操作 ====================
+
+// QueuePush 向队列左端推入数据（LPUSH）
+func (c *Cache) QueuePush(ctx context.Context, value interface{}, keyParts ...string) error {
+	if c == nil {
+		return fmt.Errorf("cache is nil")
+	}
+
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("序列化失败: %w", err)
+	}
+
+	return c.client.LPush(ctx, c.key(keyParts...), data).Err()
+}
+
+// QueuePop 从队列右端阻塞弹出数据（BRPOP），timeout=0 表示无限等待
+func (c *Cache) QueuePop(ctx context.Context, dest interface{}, timeout time.Duration, keyParts ...string) error {
+	if c == nil {
+		return fmt.Errorf("cache is nil")
+	}
+
+	result, err := c.client.BRPop(ctx, timeout, c.key(keyParts...)).Result()
+	if err != nil {
+		return err
+	}
+
+	// BRPop 返回 [key, value]
+	if len(result) < 2 {
+		return fmt.Errorf("unexpected BRPop result")
+	}
+
+	return json.Unmarshal([]byte(result[1]), dest)
+}
+
+// QueueLen 获取队列长度
+func (c *Cache) QueueLen(ctx context.Context, keyParts ...string) int64 {
+	if c == nil {
+		return 0
+	}
+
+	val, err := c.client.LLen(ctx, c.key(keyParts...)).Result()
+	if err != nil {
+		return 0
+	}
+	return val
+}
+
+// IsAvailable 检查 Redis 是否可用
+func (c *Cache) IsAvailable() bool {
+	return c != nil && c.client != nil
+}
+
 // DeletePattern 按模式删除（如 "oj:problems:*"）
 func (c *Cache) DeletePattern(ctx context.Context, pattern string) {
 	if c == nil {

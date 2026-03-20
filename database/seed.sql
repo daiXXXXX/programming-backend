@@ -1,7 +1,7 @@
 -- 初始种子数据
 
 -- 插入题目
-INSERT INTO problems (id, title, difficulty, description, input_format, output_format, constraints, created_by) VALUES
+INSERT INTO problems (id, title, difficulty, description, input_format, output_format, constraints_text, created_by) VALUES
 (1, '两数之和', 'Easy', '给定一个整数数组和一个目标和，返回两个数字的索引，使它们相加等于目标值。', '第一行：用空格分隔的整数数组\n第二行：目标整数', '两个用空格分隔的整数，表示索引（从0开始）', '• 2 ≤ 数组长度 ≤ 10⁴\n• -10⁹ ≤ array[i] ≤ 10⁹\n• 只存在一个有效答案', 1),
 (2, '反转字符串', 'Easy', '编写一个函数来反转字符串。输入字符串以字符数组的形式给出。', '一行包含一个字符串', '反转后的字符串', '• 1 ≤ 字符串长度 ≤ 10⁵\n• 字符串由可打印的ASCII字符组成', 1),
 (3, '有效的回文串', 'Easy', '给定一个字符串，判断它是否是回文串，只考虑字母和数字字符，并忽略大小写。', '一行包含一个字符串', '如果是回文串返回 true，否则返回 false', '• 1 ≤ 字符串长度 ≤ 2 × 10⁵\n• 字符串由可打印的ASCII字符组成', 1),

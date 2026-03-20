@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS problems (
     description TEXT NOT NULL,
     input_format TEXT NOT NULL,
     output_format TEXT NOT NULL,
-    constraints TEXT NOT NULL,
+    constraints_text TEXT NOT NULL,
     created_by BIGINT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

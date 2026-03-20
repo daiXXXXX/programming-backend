@@ -1,36 +1,43 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/daiXXXXX/programming-backend/internal/cache"
 	"github.com/daiXXXXX/programming-backend/internal/database"
 	"github.com/daiXXXXX/programming-backend/internal/evaluator"
 	"github.com/daiXXXXX/programming-backend/internal/models"
+	"github.com/daiXXXXX/programming-backend/internal/worker"
+	"github.com/gin-gonic/gin"
 )
 
 type SubmissionHandler struct {
 	submissionRepo *database.SubmissionRepository
 	problemRepo    *database.ProblemRepository
 	evaluator      *evaluator.Evaluator
+	cache          *cache.Cache
 }
 
 func NewSubmissionHandler(
 	submissionRepo *database.SubmissionRepository,
 	problemRepo *database.ProblemRepository,
 	eval *evaluator.Evaluator,
+	cache *cache.Cache,
 ) *SubmissionHandler {
 	return &SubmissionHandler{
 		submissionRepo: submissionRepo,
 		problemRepo:    problemRepo,
 		evaluator:      eval,
+		cache:          cache,
 	}
 }
 
 // SubmitCode 提交代码
 // POST /api/submissions
+// Redis 可用时异步评测（立即返回 Pending），否则同步评测
 func (h *SubmissionHandler) SubmitCode(c *gin.Context) {
 	var req models.SubmitCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -50,8 +57,8 @@ func (h *SubmissionHandler) SubmitCode(c *gin.Context) {
 	}
 	req.UserID = userIDVal.(int64)
 
-	// 获取题目和测试用例
-	problem, err := h.problemRepo.GetByID(req.ProblemID)
+	// 检查题目是否存在
+	_, err := h.problemRepo.GetByID(req.ProblemID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": "Problem not found",
@@ -59,12 +66,74 @@ func (h *SubmissionHandler) SubmitCode(c *gin.Context) {
 		return
 	}
 
-	// 评测代码
+	if req.Language == "" {
+		req.Language = "JavaScript"
+	}
+
+	// ==== 异步模式：Redis 可用时走队列 ====
+	if h.cache.IsAvailable() {
+		submission := &models.Submission{
+			ProblemID: req.ProblemID,
+			UserID:    req.UserID,
+			Code:      req.Code,
+			Language:  req.Language,
+		}
+
+		// 先在数据库创建 Pending 记录
+		submissionID, err := h.submissionRepo.CreatePending(submission)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to save submission",
+			})
+			return
+		}
+
+		// 推入 Redis 评测队列
+		task := worker.JudgeTask{
+			SubmissionID: submissionID,
+			ProblemID:    req.ProblemID,
+			UserID:       req.UserID,
+			Code:         req.Code,
+			Language:     req.Language,
+		}
+
+		if err := h.cache.QueuePush(c.Request.Context(), &task, worker.QueueKey); err != nil {
+			log.Printf("[Submit] 推入队列失败，回退到同步评测: %v", err)
+			// 队列推送失败，回退到同步模式
+			h.syncEvaluate(c, submissionID, req)
+			return
+		}
+
+		queueLen := h.cache.QueueLen(c.Request.Context(), worker.QueueKey)
+		log.Printf("[Submit] 任务已入队: submission=%d, 当前队列长度=%d", submissionID, queueLen)
+
+		// 立即返回 Pending 状态
+		c.JSON(http.StatusAccepted, gin.H{
+			"id":          submissionID,
+			"problemId":   req.ProblemID,
+			"userId":      req.UserID,
+			"code":        req.Code,
+			"language":    req.Language,
+			"status":      models.StatusPending,
+			"score":       0,
+			"submittedAt": time.Now(),
+			"message":     "提交成功，正在评测中...",
+		})
+		return
+	}
+
+	// ==== 同步模式：Redis 不可用时走原逻辑 ====
+	h.syncSubmit(c, req)
+}
+
+// syncSubmit 同步提交评测（原逻辑，Redis 不可用时的降级路径）
+func (h *SubmissionHandler) syncSubmit(c *gin.Context, req models.SubmitCodeRequest) {
+	problem, _ := h.problemRepo.GetByID(req.ProblemID)
+
 	testResults := h.evaluator.EvaluateCode(req.Code, req.Language, problem.TestCases)
 	score := h.evaluator.CalculateScore(testResults)
 	status := h.evaluator.GetSubmissionStatus(testResults)
 
-	// 创建提交记录
 	submission := &models.Submission{
 		ProblemID:   req.ProblemID,
 		UserID:      req.UserID,
@@ -75,24 +144,37 @@ func (h *SubmissionHandler) SubmitCode(c *gin.Context) {
 		TestResults: testResults,
 	}
 
-	if submission.Language == "" {
-		submission.Language = "JavaScript"
-	}
-
 	submissionID, err := h.submissionRepo.Create(submission)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to save submission",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save submission"})
 		return
 	}
 
-	// 获取完整的提交记录（包含测试结果）
 	savedSubmission, err := h.submissionRepo.GetByID(submissionID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch submission",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch submission"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, savedSubmission)
+}
+
+// syncEvaluate 同步评测已创建的 Pending 记录（队列推送失败时的回退）
+func (h *SubmissionHandler) syncEvaluate(c *gin.Context, submissionID int64, req models.SubmitCodeRequest) {
+	problem, _ := h.problemRepo.GetByID(req.ProblemID)
+
+	testResults := h.evaluator.EvaluateCode(req.Code, req.Language, problem.TestCases)
+	score := h.evaluator.CalculateScore(testResults)
+	status := h.evaluator.GetSubmissionStatus(testResults)
+
+	if err := h.submissionRepo.UpdateResult(submissionID, status, score, testResults); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update submission"})
+		return
+	}
+
+	savedSubmission, err := h.submissionRepo.GetByID(submissionID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch submission"})
 		return
 	}
 

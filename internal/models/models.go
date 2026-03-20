@@ -13,6 +13,7 @@ const (
 type SubmissionStatus string
 
 const (
+	StatusPending           SubmissionStatus = "Pending"
 	StatusAccepted          SubmissionStatus = "Accepted"
 	StatusWrongAnswer       SubmissionStatus = "Wrong Answer"
 	StatusRuntimeError      SubmissionStatus = "Runtime Error"
@@ -140,15 +141,15 @@ type Solution struct {
 	ProblemID    int64     `json:"problemId"`
 	UserID       int64     `json:"userId"`
 	Title        string    `json:"title"`
-	Content      string    `json:"content"`      // Markdown
+	Content      string    `json:"content"` // Markdown
 	ViewCount    int       `json:"viewCount"`
 	LikeCount    int       `json:"likeCount"`
 	CommentCount int       `json:"commentCount"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 	// 关联信息（查询时填充）
-	Author       *SolutionAuthor `json:"author,omitempty"`
-	Liked        bool            `json:"liked"`        // 当前用户是否已点赞
+	Author *SolutionAuthor `json:"author,omitempty"`
+	Liked  bool            `json:"liked"` // 当前用户是否已点赞
 }
 
 // SolutionAuthor 题解作者信息
@@ -160,16 +161,16 @@ type SolutionAuthor struct {
 
 // SolutionComment 题解评论
 type SolutionComment struct {
-	ID         int64              `json:"id"`
-	SolutionID int64              `json:"solutionId"`
-	UserID     int64              `json:"userId"`
-	ParentID   *int64             `json:"parentId,omitempty"`
-	Content    string             `json:"content"`
-	LikeCount  int                `json:"likeCount"`
-	CreatedAt  time.Time          `json:"createdAt"`
-	UpdatedAt  time.Time          `json:"updatedAt"`
-	Author     *SolutionAuthor    `json:"author,omitempty"`
-	Replies    []SolutionComment  `json:"replies,omitempty"`
+	ID         int64             `json:"id"`
+	SolutionID int64             `json:"solutionId"`
+	UserID     int64             `json:"userId"`
+	ParentID   *int64            `json:"parentId,omitempty"`
+	Content    string            `json:"content"`
+	LikeCount  int               `json:"likeCount"`
+	CreatedAt  time.Time         `json:"createdAt"`
+	UpdatedAt  time.Time         `json:"updatedAt"`
+	Author     *SolutionAuthor   `json:"author,omitempty"`
+	Replies    []SolutionComment `json:"replies,omitempty"`
 }
 
 // CreateSolutionRequest 创建题解请求
@@ -195,21 +196,22 @@ type CreateCommentRequest struct {
 type WSMessageType string
 
 const (
-	WSTypeChat           WSMessageType = "chat"            // 用户聊天/讨论
-	WSTypeSystemNotice   WSMessageType = "system_notice"   // 系统通知
-	WSTypeNewComment     WSMessageType = "new_comment"     // 新评论通知
-	WSTypeNewSolution    WSMessageType = "new_solution"    // 新题解通知
-	WSTypeLikeNotify     WSMessageType = "like_notify"     // 点赞通知
-	WSTypeOnlineCount    WSMessageType = "online_count"    // 在线人数
+	WSTypeChat         WSMessageType = "chat"          // 用户聊天/讨论
+	WSTypeSystemNotice WSMessageType = "system_notice" // 系统通知
+	WSTypeNewComment   WSMessageType = "new_comment"   // 新评论通知
+	WSTypeNewSolution  WSMessageType = "new_solution"  // 新题解通知
+	WSTypeLikeNotify   WSMessageType = "like_notify"   // 点赞通知
+	WSTypeOnlineCount  WSMessageType = "online_count"  // 在线人数
+	WSTypeJudgeResult  WSMessageType = "judge_result"  // 评测结果通知
 )
 
 // WSMessage WebSocket 消息
 type WSMessage struct {
-	Type      WSMessageType `json:"type"`
-	Channel   string        `json:"channel,omitempty"`   // 频道标识，如 "solution:123"
+	Type      WSMessageType   `json:"type"`
+	Channel   string          `json:"channel,omitempty"` // 频道标识，如 "solution:123"
 	From      *SolutionAuthor `json:"from,omitempty"`
-	Content   interface{}   `json:"content"`
-	Timestamp time.Time     `json:"timestamp"`
+	Content   interface{}     `json:"content"`
+	Timestamp time.Time       `json:"timestamp"`
 }
 
 // CreateProblemRequest 创建题目请求

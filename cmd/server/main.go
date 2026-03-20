@@ -11,6 +11,7 @@ import (
 	"github.com/daiXXXXX/programming-backend/internal/evaluator"
 	"github.com/daiXXXXX/programming-backend/internal/handlers"
 	"github.com/daiXXXXX/programming-backend/internal/middleware"
+	"github.com/daiXXXXX/programming-backend/internal/worker"
 	"github.com/daiXXXXX/programming-backend/internal/ws"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -59,9 +60,16 @@ func main() {
 	wsHub := ws.NewHub()
 	go wsHub.Run()
 
+	// 初始化评测队列 Worker（Redis 可用时启动异步消费者）
+	if redisCache != nil {
+		judgeWorker := worker.NewJudgeWorker(redisCache, submissionRepo, problemRepo, eval, wsHub, 2)
+		judgeWorker.Start()
+		defer judgeWorker.Stop()
+	}
+
 	// 初始化处理器
 	problemHandler := handlers.NewProblemHandler(problemRepo, redisCache)
-	submissionHandler := handlers.NewSubmissionHandler(submissionRepo, problemRepo, eval)
+	submissionHandler := handlers.NewSubmissionHandler(submissionRepo, problemRepo, eval, redisCache)
 	authHandler := handlers.NewAuthHandler(userRepo, jwtManager)
 	rankingHandler := handlers.NewRankingHandler(userRepo, redisCache)
 	managerHandler := handlers.NewManagerHandler(classRepo)
