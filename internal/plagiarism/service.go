@@ -18,7 +18,6 @@ const (
 	defaultMaxCandidates   = 5
 	maxCandidateLimit      = 10
 	defaultMinHeuristic    = 0.55
-	fallbackMinHeuristic   = 0.40
 	maxProblemDescription  = 1600
 	maxCodeCharactersForAI = 7000
 	shingleSize            = 5
@@ -33,7 +32,6 @@ var (
 	hashCommentRegexp        = regexp.MustCompile(`(?m)#.*$`)
 	numberRegexp             = regexp.MustCompile(`\b\d+(\.\d+)?\b`)
 	tokenRegexp              = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*|==|!=|<=|>=|&&|\|\||[{}()\[\];,.:+\-*/%<>!=]`)
-	whitespaceRegexp         = regexp.MustCompile(`\s+`)
 	identifierRegexp         = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
@@ -158,15 +156,11 @@ type candidatePair struct {
 	HeuristicScore float64
 }
 
-type normalizedSource struct {
-	Tokens []string
-	Lines  []string
-}
-
 func buildCandidatePairs(submissions []models.ClassProblemSubmission, maxCandidates int, minHeuristic float64) []candidatePair {
-	var allPairs []candidatePair
 	var selected []candidatePair
 
+	// 先在本地把所有提交两两比较一遍，只把真正分数较高、信号较强的
+	// 少量候选 pair 送给成本更高的 AI 做进一步判定。
 	for i := 0; i < len(submissions); i++ {
 		for j := i + 1; j < len(submissions); j++ {
 			left, right := orderedPair(submissions[i], submissions[j])
@@ -181,7 +175,6 @@ func buildCandidatePairs(submissions []models.ClassProblemSubmission, maxCandida
 				Right:          right,
 				HeuristicScore: score,
 			}
-			allPairs = append(allPairs, pair)
 			if score >= minHeuristic {
 				selected = append(selected, pair)
 			}
@@ -189,13 +182,6 @@ func buildCandidatePairs(submissions []models.ClassProblemSubmission, maxCandida
 	}
 
 	sortCandidates(selected)
-	if len(selected) == 0 {
-		sortCandidates(allPairs)
-		if len(allPairs) > 0 && allPairs[0].HeuristicScore >= fallbackMinHeuristic {
-			selected = append(selected, allPairs[0])
-		}
-	}
-
 	if len(selected) > maxCandidates {
 		selected = selected[:maxCandidates]
 	}
@@ -229,18 +215,18 @@ func heuristicSimilarity(leftCode, rightCode string) float64 {
 	left := normalizeSourceCode(leftCode)
 	right := normalizeSourceCode(rightCode)
 
-	if len(left.Tokens) == 0 || len(right.Tokens) == 0 {
+	if len(left) == 0 || len(right) == 0 {
 		return 0
 	}
 
-	tokenScore := shingleJaccard(left.Tokens, right.Tokens, shingleSize)
-	lineScore := setJaccard(left.Lines, right.Lines)
-	lengthScore := lengthBalance(len(left.Tokens), len(right.Tokens))
-
-	return roundSimilarity(clamp01(0.65*tokenScore + 0.25*lineScore + 0.10*lengthScore))
+	// 本地启发式分数故意保持简单，只比较标准化后的 token shingle，
+	// 更细致的“是否真的抄袭”判断交给后续 AI 分析。
+	return roundSimilarity(shingleJaccard(left, right, shingleSize))
 }
 
-func normalizeSourceCode(code string) normalizedSource {
+func normalizeSourceCode(code string) []string {
+	// 先去掉只影响表面形式的差异，避免变量改名、注释改写、字面量调整、
+	// 格式变化这些因素过度影响本地相似度分数。
 	normalized := strings.ReplaceAll(code, "\r\n", "\n")
 	normalized = strings.ReplaceAll(normalized, "\r", "\n")
 	normalized = doubleQuotedStringRegexp.ReplaceAllString(normalized, "STR")
@@ -252,25 +238,8 @@ func normalizeSourceCode(code string) normalizedSource {
 	normalized = numberRegexp.ReplaceAllString(normalized, "NUM")
 	normalized = strings.ToLower(normalized)
 
-	var lines []string
-	for _, line := range strings.Split(normalized, "\n") {
-		line = whitespaceRegexp.ReplaceAllString(strings.TrimSpace(line), " ")
-		if line == "" {
-			continue
-		}
-
-		tokens := tokenRegexp.FindAllString(line, -1)
-		if len(tokens) == 0 {
-			continue
-		}
-		lines = append(lines, strings.Join(normalizeTokens(tokens), " "))
-	}
-
 	tokens := tokenRegexp.FindAllString(normalized, -1)
-	return normalizedSource{
-		Tokens: normalizeTokens(tokens),
-		Lines:  lines,
-	}
+	return normalizeTokens(tokens)
 }
 
 func normalizeTokens(tokens []string) []string {
@@ -282,6 +251,8 @@ func normalizeTokens(tokens []string) []string {
 		}
 		if identifierRegexp.MatchString(token) {
 			if _, isKeyword := keywordSet[token]; !isKeyword {
+				// 把用户自定义标识符统一折叠成占位符，降低“只改变量名”
+				// 这类表面改写对启发式分数的干扰。
 				token = "id"
 			}
 		}
@@ -322,6 +293,8 @@ func buildShingles(tokens []string, size int) map[string]struct{} {
 	}
 
 	if len(tokens) <= size {
+		// 很短的代码也保留一个可比较片段，避免因为 token 数量太少
+		// 直接被本地启发式完全忽略。
 		result[strings.Join(tokens, " ")] = struct{}{}
 		return result
 	}
@@ -330,51 +303,6 @@ func buildShingles(tokens []string, size int) map[string]struct{} {
 		result[strings.Join(tokens[i:i+size], " ")] = struct{}{}
 	}
 	return result
-}
-
-func setJaccard(left, right []string) float64 {
-	leftSet := make(map[string]struct{}, len(left))
-	rightSet := make(map[string]struct{}, len(right))
-	for _, item := range left {
-		leftSet[item] = struct{}{}
-	}
-	for _, item := range right {
-		rightSet[item] = struct{}{}
-	}
-
-	if len(leftSet) == 0 || len(rightSet) == 0 {
-		return 0
-	}
-
-	intersection := 0
-	union := make(map[string]struct{}, len(leftSet)+len(rightSet))
-	for item := range leftSet {
-		union[item] = struct{}{}
-	}
-	for item := range rightSet {
-		if _, exists := leftSet[item]; exists {
-			intersection++
-		}
-		union[item] = struct{}{}
-	}
-
-	if len(union) == 0 {
-		return 0
-	}
-	return float64(intersection) / float64(len(union))
-}
-
-func lengthBalance(leftLen, rightLen int) float64 {
-	if leftLen == 0 || rightLen == 0 {
-		return 0
-	}
-
-	smaller := leftLen
-	larger := rightLen
-	if smaller > larger {
-		smaller, larger = larger, smaller
-	}
-	return float64(smaller) / float64(larger)
 }
 
 func orderedPair(left, right models.ClassProblemSubmission) (models.ClassProblemSubmission, models.ClassProblemSubmission) {

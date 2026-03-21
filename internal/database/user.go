@@ -54,15 +54,20 @@ func (r *UserRepository) Create(user *models.User) error {
 // GetByID 根据ID获取用户
 func (r *UserRepository) GetByID(id int64) (*models.User, error) {
 	query := `
-		SELECT id, username, email, password_hash, role, COALESCE(avatar, '') as avatar, COALESCE(bio, '') as bio, created_at, updated_at
-		FROM users
-		WHERE id = ?
+		SELECT u.id, u.username, u.email,COALESCE(cs.class_id, 0),COALESCE(c.name, '') as class_name, u.password_hash, u.role, 
+		COALESCE(u.avatar, '') as avatar, COALESCE(u.bio, '') as bio, u.created_at, u.updated_at
+		FROM users u
+		LEFT JOIN class_students cs ON u.id = cs.student_id
+		LEFT JOIN classes c ON cs.class_id = c.id
+		WHERE u.id = ?
 	`
 	user := &models.User{}
 	err := r.db.QueryRow(query, id).Scan(
 		&user.ID,
 		&user.Username,
 		&user.Email,
+		&user.ClassId,
+		&user.ClassName,
 		&user.PasswordHash,
 		&user.Role,
 		&user.Avatar,

@@ -118,6 +118,8 @@ type DailyActivity struct {
 type User struct {
 	ID           int64     `json:"id"`
 	Username     string    `json:"username"`
+	ClassId      int64     `json:"classId"`
+	ClassName    string    `json:"className"`
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"` // 不在 JSON 中返回
 	Role         string    `json:"role"`

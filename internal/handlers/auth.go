@@ -60,6 +60,8 @@ type UserDTO struct {
 	ID        int64     `json:"id"`
 	Username  string    `json:"username"`
 	Email     string    `json:"email"`
+	ClassId   int64     `json:"classId"`
+	ClassName string    `json:"className"`
 	Role      string    `json:"role"`
 	Avatar    string    `json:"avatar"`
 	Bio       string    `json:"bio"`
@@ -394,6 +396,8 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		ID:        user.ID,
 		Username:  user.Username,
 		Email:     user.Email,
+		ClassId:   user.ClassId,
+		ClassName: user.ClassName,
 		Role:      user.Role,
 		Avatar:    user.Avatar,
 		Bio:       user.Bio,
