@@ -137,6 +137,23 @@ type SubmitCodeRequest struct {
 	UserID    int64  `json:"userId"` // 暂时从请求中获取，后续从 JWT 中提取
 }
 
+// RunSampleTestsRequest 运行样例测试请求
+type RunSampleTestsRequest struct {
+	ProblemID int64  `json:"problemId" binding:"required"`
+	Code      string `json:"code" binding:"required"`
+	Language  string `json:"language"`
+}
+
+// CodeRunResult 代码运行结果（用于本地样例测试）
+type CodeRunResult struct {
+	ProblemID   int64            `json:"problemId"`
+	Language    string           `json:"language"`
+	Status      SubmissionStatus `json:"status"`
+	Score       int              `json:"score"`
+	TestResults []TestResult     `json:"testResults,omitempty"`
+	RanAt       time.Time        `json:"ranAt"`
+}
+
 // Solution 题解
 type Solution struct {
 	ID           int64     `json:"id"`

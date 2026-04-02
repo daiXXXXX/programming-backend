@@ -153,6 +153,7 @@ func main() {
 		submissions := api.Group("/submissions")
 		submissions.Use(middleware.AuthMiddleware(jwtManager))
 		{
+			submissions.POST("/test", submissionHandler.RunSampleTests)
 			submissions.POST("", submissionHandler.SubmitCode)
 			submissions.GET("/:id", submissionHandler.GetSubmission)
 			submissions.GET("/user/:userId", submissionHandler.GetUserSubmissions)

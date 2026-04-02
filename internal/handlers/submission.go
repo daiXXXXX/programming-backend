@@ -21,6 +21,9 @@ type SubmissionHandler struct {
 	cache          *cache.Cache
 }
 
+// maxSampleTestCases 控制本地测试最多执行的公开样例数量。
+const maxSampleTestCases = 3
+
 func NewSubmissionHandler(
 	submissionRepo *database.SubmissionRepository,
 	problemRepo *database.ProblemRepository,
@@ -33,6 +36,41 @@ func NewSubmissionHandler(
 		evaluator:      eval,
 		cache:          cache,
 	}
+}
+
+// RunSampleTests 运行题目的公开样例，但不会落库为正式提交记录。
+// POST /api/submissions/test
+func (h *SubmissionHandler) RunSampleTests(c *gin.Context) {
+	var req models.RunSampleTestsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if req.Language == "" {
+		req.Language = "JavaScript"
+	}
+
+	problem, err := h.problemRepo.GetByID(req.ProblemID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Problem not found",
+		})
+		return
+	}
+
+	// 仅运行样例；若题目未标记样例，则回退到前几个用例保证功能可用。
+	sampleTestCases := selectSampleTestCases(problem.TestCases)
+	if len(sampleTestCases) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "No sample test cases available",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, h.buildCodeRunResult(req.ProblemID, req.Code, req.Language, sampleTestCases))
 }
 
 // SubmitCode 提交代码
@@ -157,6 +195,46 @@ func (h *SubmissionHandler) syncSubmit(c *gin.Context, req models.SubmitCodeRequ
 	}
 
 	c.JSON(http.StatusCreated, savedSubmission)
+}
+
+// buildCodeRunResult 统一构造同步执行结果，供本地样例测试与同步评测复用。
+func (h *SubmissionHandler) buildCodeRunResult(problemID int64, code string, language string, testCases []models.TestCase) models.CodeRunResult {
+	testResults := h.evaluator.EvaluateCode(code, language, testCases)
+	score := h.evaluator.CalculateScore(testResults)
+	status := h.evaluator.GetSubmissionStatus(testResults)
+
+	return models.CodeRunResult{
+		ProblemID:   problemID,
+		Language:    language,
+		Status:      status,
+		Score:       score,
+		TestResults: testResults,
+		RanAt:       time.Now(),
+	}
+}
+
+// selectSampleTestCases 只暴露公开样例，避免本地测试访问完整判题数据。
+func selectSampleTestCases(testCases []models.TestCase) []models.TestCase {
+	sampleTestCases := make([]models.TestCase, 0, maxSampleTestCases)
+	for _, testCase := range testCases {
+		if !testCase.IsSample {
+			continue
+		}
+		sampleTestCases = append(sampleTestCases, testCase)
+		if len(sampleTestCases) >= maxSampleTestCases {
+			return sampleTestCases
+		}
+	}
+
+	if len(sampleTestCases) > 0 {
+		return sampleTestCases
+	}
+
+	if len(testCases) <= maxSampleTestCases {
+		return testCases
+	}
+
+	return testCases[:maxSampleTestCases]
 }
 
 // syncEvaluate 同步评测已创建的 Pending 记录（队列推送失败时的回退）
