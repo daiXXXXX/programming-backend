@@ -70,7 +70,7 @@ func main() {
 	}
 
 	// 初始化处理器
-	problemHandler := handlers.NewProblemHandler(problemRepo, redisCache)
+	problemHandler := handlers.NewProblemHandler(problemRepo, redisCache, eval)
 	submissionHandler := handlers.NewSubmissionHandler(submissionRepo, problemRepo, eval, redisCache)
 	authHandler := handlers.NewAuthHandler(userRepo, jwtManager)
 	rankingHandler := handlers.NewRankingHandler(userRepo, redisCache)
@@ -144,6 +144,7 @@ func main() {
 		problemsAdmin.Use(middleware.AuthMiddleware(jwtManager))
 		problemsAdmin.Use(middleware.InstructorOnly())
 		{
+			problemsAdmin.POST("/validate", problemHandler.ValidateProblemDraft)
 			problemsAdmin.POST("", problemHandler.CreateProblem)
 			problemsAdmin.PUT("/:id", problemHandler.UpdateProblem)
 			problemsAdmin.DELETE("/:id", problemHandler.DeleteProblem)

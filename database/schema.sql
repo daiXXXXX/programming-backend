@@ -63,6 +63,20 @@ CREATE TABLE IF NOT EXISTS problem_tags (
     FOREIGN KEY (problem_id) REFERENCES problems(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 题目标准程序留档
+CREATE TABLE IF NOT EXISTS problem_reference_solutions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    problem_id BIGINT NOT NULL,
+    language VARCHAR(50) NOT NULL,
+    source_code MEDIUMTEXT NOT NULL,
+    created_by BIGINT DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_problem_reference_solution (problem_id),
+    FOREIGN KEY (problem_id) REFERENCES problems(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- 提交记录
 CREATE TABLE IF NOT EXISTS submissions (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -118,6 +132,7 @@ CREATE INDEX idx_test_results_submission_id ON test_results(submission_id);
 CREATE INDEX idx_problem_tags_problem_id ON problem_tags(problem_id);
 CREATE INDEX idx_problem_examples_problem_id ON problem_examples(problem_id);
 CREATE INDEX idx_test_cases_problem_id ON test_cases(problem_id);
+CREATE INDEX idx_problem_reference_solutions_created_by ON problem_reference_solutions(created_by);
 
 -- 插入初始数据
 INSERT IGNORE INTO users (username, email, password_hash, role) VALUES 

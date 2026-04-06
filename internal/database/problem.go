@@ -281,6 +281,11 @@ func (r *ProblemRepository) Create(req *models.CreateProblemRequest, createdBy i
 		}
 	}
 
+	// 录题时同步保存标准程序，便于后续复查测试数据与题目配置。
+	if err = r.upsertStandardProgram(tx, problemID, req.StandardProgram, createdBy); err != nil {
+		return 0, err
+	}
+
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
@@ -359,6 +364,13 @@ func (r *ProblemRepository) Update(id int64, req *models.CreateProblemRequest) e
 		}
 	}
 
+	// 若前端提交了新的标准程序，则替换旧版本；未提交时保留现有留档数据。
+	if req.StandardProgram != nil {
+		if err = r.upsertStandardProgram(tx, id, req.StandardProgram, 0); err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit()
 }
 
@@ -379,4 +391,27 @@ func (r *ProblemRepository) Delete(id int64) error {
 	}
 
 	return nil
+}
+
+// upsertStandardProgram 在题目创建或更新时同步维护标准程序留档。
+func (r *ProblemRepository) upsertStandardProgram(tx *sql.Tx, problemID int64, program *models.ProblemStandardProgram, createdBy int64) error {
+	if program == nil {
+		return nil
+	}
+
+	if _, err := tx.Exec(`DELETE FROM problem_reference_solutions WHERE problem_id = ?`, problemID); err != nil {
+		return err
+	}
+
+	var createdByValue interface{}
+	if createdBy > 0 {
+		createdByValue = createdBy
+	}
+
+	_, err := tx.Exec(
+		`INSERT INTO problem_reference_solutions (problem_id, language, source_code, created_by)
+		 VALUES (?, ?, ?, ?)`,
+		problemID, program.Language, program.Code, createdByValue,
+	)
+	return err
 }

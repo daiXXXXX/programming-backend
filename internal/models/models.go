@@ -36,6 +36,12 @@ type Problem struct {
 	UpdatedAt    time.Time       `json:"updatedAt"`
 }
 
+// ProblemStandardProgram 出题时提交的标准程序，用于校验测试数据并在后台留档。
+type ProblemStandardProgram struct {
+	Language string `json:"language" binding:"required"`
+	Code     string `json:"code" binding:"required"`
+}
+
 // Example 题目示例
 type Example struct {
 	ID          int64  `json:"id,omitempty"`
@@ -154,6 +160,18 @@ type CodeRunResult struct {
 	RanAt       time.Time        `json:"ranAt"`
 }
 
+// ValidateProblemRequest 录题前校验标准程序时使用的请求体。
+type ValidateProblemRequest struct {
+	TestCases       []TestCase             `json:"testCases" binding:"required"`
+	StandardProgram ProblemStandardProgram `json:"standardProgram" binding:"required"`
+}
+
+// ProblemValidationResponse 返回标准程序校验结果，前端可据此决定是否允许录题。
+type ProblemValidationResponse struct {
+	Ready  bool          `json:"ready"`
+	Result CodeRunResult `json:"result"`
+}
+
 // Solution 题解
 type Solution struct {
 	ID           int64     `json:"id"`
@@ -235,13 +253,14 @@ type WSMessage struct {
 
 // CreateProblemRequest 创建题目请求
 type CreateProblemRequest struct {
-	Title        string          `json:"title" binding:"required"`
-	Difficulty   DifficultyLevel `json:"difficulty" binding:"required"`
-	Description  string          `json:"description" binding:"required"`
-	InputFormat  string          `json:"inputFormat" binding:"required"`
-	OutputFormat string          `json:"outputFormat" binding:"required"`
-	Constraints  string          `json:"constraints" binding:"required"`
-	Examples     []Example       `json:"examples" binding:"required"`
-	TestCases    []TestCase      `json:"testCases" binding:"required"`
-	Tags         []string        `json:"tags"`
+	Title           string                  `json:"title" binding:"required"`
+	Difficulty      DifficultyLevel         `json:"difficulty" binding:"required"`
+	Description     string                  `json:"description" binding:"required"`
+	InputFormat     string                  `json:"inputFormat" binding:"required"`
+	OutputFormat    string                  `json:"outputFormat" binding:"required"`
+	Constraints     string                  `json:"constraints" binding:"required"`
+	Examples        []Example               `json:"examples" binding:"required"`
+	TestCases       []TestCase              `json:"testCases" binding:"required"`
+	Tags            []string                `json:"tags"`
+	StandardProgram *ProblemStandardProgram `json:"standardProgram,omitempty"`
 }
