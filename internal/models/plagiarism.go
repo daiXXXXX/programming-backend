@@ -2,6 +2,8 @@ package models
 
 import "time"
 
+const SubmissionTagCheating = "作弊"
+
 type PlagiarismCheckRequest struct {
 	ProblemID         int64   `json:"problemId" binding:"required"`
 	AcceptedOnly      bool    `json:"acceptedOnly"`
@@ -21,6 +23,8 @@ type ClassProblemSubmission struct {
 	Score        int              `json:"score"`
 	SubmittedAt  time.Time        `json:"submittedAt"`
 	Selection    string           `json:"selection"`
+	Tags         []string         `json:"tags"`
+	MarkedCheating bool           `json:"markedCheating"`
 }
 
 type PlagiarismStudent struct {
@@ -36,6 +40,8 @@ type PlagiarismSubmissionRef struct {
 	Score       int              `json:"score"`
 	SubmittedAt time.Time        `json:"submittedAt"`
 	Selection   string           `json:"selection"`
+	Tags        []string         `json:"tags"`
+	MarkedCheating bool          `json:"markedCheating"`
 }
 
 type PlagiarismPairResult struct {
@@ -51,6 +57,7 @@ type PlagiarismPairResult struct {
 	Summary        string                  `json:"summary"`
 	Evidence       []string                `json:"evidence"`
 	Differences    []string                `json:"differences"`
+	AlreadyMarked  bool                    `json:"alreadyMarked"`
 }
 
 type PlagiarismCheckResponse struct {
@@ -62,4 +69,20 @@ type PlagiarismCheckResponse struct {
 	CandidatePairs   int                    `json:"candidatePairs"`
 	OverallSummary   string                 `json:"overallSummary"`
 	Results          []PlagiarismPairResult `json:"results"`
+}
+
+type PlagiarismMarkRequest struct {
+	ProblemID     int64 `json:"problemId" binding:"required"`
+	SubmissionAID int64 `json:"submissionAId" binding:"required"`
+	SubmissionBID int64 `json:"submissionBId" binding:"required"`
+}
+
+type PlagiarismMarkResponse struct {
+	ClassID     int64                  `json:"classId"`
+	ProblemID   int64                  `json:"problemId"`
+	PairKey     string                 `json:"pairKey"`
+	Tag         string                 `json:"tag"`
+	Message     string                 `json:"message"`
+	SubmissionA PlagiarismSubmissionRef `json:"submissionA"`
+	SubmissionB PlagiarismSubmissionRef `json:"submissionB"`
 }

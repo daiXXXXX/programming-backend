@@ -143,6 +143,7 @@ func (s *Service) CheckClassProblem(
 			Summary:        strings.TrimSpace(analysis.Summary),
 			Evidence:       normalizeList(analysis.Evidence),
 			Differences:    normalizeList(analysis.Differences),
+			AlreadyMarked:  candidate.Left.MarkedCheating && candidate.Right.MarkedCheating,
 		})
 	}
 
@@ -372,6 +373,8 @@ func toSubmissionRef(submission models.ClassProblemSubmission) models.Plagiarism
 		Score:       submission.Score,
 		SubmittedAt: submission.SubmittedAt,
 		Selection:   submission.Selection,
+		Tags:        append([]string{}, submission.Tags...),
+		MarkedCheating: submission.MarkedCheating,
 	}
 }
 

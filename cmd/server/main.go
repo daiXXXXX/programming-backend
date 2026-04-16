@@ -76,7 +76,7 @@ func main() {
 	rankingHandler := handlers.NewRankingHandler(userRepo, redisCache)
 	openAIClient := ai.NewOpenAIClient(cfg.OpenAI)
 	plagiarismService := plagiarism.NewService(openAIClient)
-	managerHandler := handlers.NewManagerHandler(classRepo, problemRepo, plagiarismService)
+	managerHandler := handlers.NewManagerHandler(classRepo, problemRepo, submissionRepo, plagiarismService)
 	solutionHandler := handlers.NewSolutionHandler(solutionRepo, wsHub)
 
 	// 创建路由
@@ -185,6 +185,7 @@ func main() {
 			manager.GET("/classes", managerHandler.GetAllClasses)
 			manager.GET("/classes/:id", managerHandler.GetClassDetail)
 			manager.POST("/classes/:id/plagiarism-check", managerHandler.CheckClassPlagiarism)
+			manager.POST("/classes/:id/plagiarism-marks", managerHandler.MarkClassPlagiarismPair)
 		}
 
 		// 题解相关路由（公开读取，需登录写入）

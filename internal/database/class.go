@@ -2,6 +2,8 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/daiXXXXX/programming-backend/internal/models"
@@ -42,11 +44,20 @@ type StudentProgress struct {
 	LastSubmissionAt    *time.Time `json:"lastSubmissionAt"`
 }
 
+// ClassProblemInfo 班级实验题目摘要，供教师在管理端选择查重目标题目。
+type ClassProblemInfo struct {
+	ID              int64                  `json:"id"`
+	Title           string                 `json:"title"`
+	Difficulty      models.DifficultyLevel `json:"difficulty"`
+	ExperimentCount int                    `json:"experimentCount"`
+}
+
 // ClassDetailData 班级详情
 type ClassDetailData struct {
-	ClassInfo   ClassInfo         `json:"classInfo"`
-	Experiments []ExperimentInfo  `json:"experiments"`
-	Students    []StudentProgress `json:"students"`
+	ClassInfo   ClassInfo          `json:"classInfo"`
+	Experiments []ExperimentInfo   `json:"experiments"`
+	Problems    []ClassProblemInfo `json:"problems"`
+	Students    []StudentProgress  `json:"students"`
 }
 
 // ClassRepository 班级仓库
@@ -380,7 +391,132 @@ func (r *ClassRepository) GetRepresentativeProblemSubmissions(classID, problemID
 		submissions = []models.ClassProblemSubmission{}
 	}
 
+	tagMap, err := r.getSubmissionTagsMap(extractSubmissionIDs(submissions))
+	if err != nil {
+		return nil, err
+	}
+	for i := range submissions {
+		submissions[i].Tags = tagMap[submissions[i].SubmissionID]
+		submissions[i].MarkedCheating = hasSubmissionTag(submissions[i].Tags, models.SubmissionTagCheating)
+	}
+
 	return submissions, rows.Err()
+}
+
+// GetClassProblems 返回班级全部实验中出现过的去重题目列表。
+func (r *ClassRepository) GetClassProblems(classID int64) ([]ClassProblemInfo, error) {
+	query := `
+		SELECT
+			p.id,
+			p.title,
+			p.difficulty,
+			COUNT(DISTINCT ce.experiment_id) AS experiment_count
+		FROM class_experiments ce
+		JOIN experiment_problems ep ON ce.experiment_id = ep.experiment_id
+		JOIN problems p ON p.id = ep.problem_id
+		WHERE ce.class_id = ?
+		GROUP BY p.id, p.title, p.difficulty
+		ORDER BY p.title ASC, p.id ASC
+	`
+
+	rows, err := r.db.Query(query, classID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	problems := make([]ClassProblemInfo, 0)
+	for rows.Next() {
+		var item ClassProblemInfo
+		if err := rows.Scan(&item.ID, &item.Title, &item.Difficulty, &item.ExperimentCount); err != nil {
+			return nil, err
+		}
+		problems = append(problems, item)
+	}
+
+	if problems == nil {
+		problems = []ClassProblemInfo{}
+	}
+	return problems, rows.Err()
+}
+
+// GetClassProblemSubmissionPair 校验两条提交是否都属于当前班级、当前题目，
+// 并返回打标后需要回显给前端的提交摘要。
+func (r *ClassRepository) GetClassProblemSubmissionPair(classID, problemID, submissionAID, submissionBID int64) (*models.ClassProblemSubmission, *models.ClassProblemSubmission, error) {
+	query := `
+		SELECT
+			s.id,
+			s.problem_id,
+			s.user_id,
+			u.username,
+			COALESCE(u.avatar, '') AS avatar,
+			s.code,
+			s.language,
+			s.status,
+			s.score,
+			s.submitted_at
+		FROM submissions s
+		JOIN class_students cs ON cs.student_id = s.user_id
+		JOIN users u ON u.id = s.user_id
+		WHERE cs.class_id = ?
+		  AND s.problem_id = ?
+		  AND s.id IN (?, ?)
+		ORDER BY s.user_id ASC, s.id ASC
+	`
+
+	rows, err := r.db.Query(query, classID, problemID, submissionAID, submissionBID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	submissions := make([]models.ClassProblemSubmission, 0, 2)
+	for rows.Next() {
+		var submission models.ClassProblemSubmission
+		var status string
+		if err := rows.Scan(
+			&submission.SubmissionID,
+			&submission.ProblemID,
+			&submission.UserID,
+			&submission.Username,
+			&submission.Avatar,
+			&submission.Code,
+			&submission.Language,
+			&status,
+			&submission.Score,
+			&submission.SubmittedAt,
+		); err != nil {
+			return nil, nil, err
+		}
+		submission.Status = models.SubmissionStatus(status)
+		submission.Selection = "manual_review"
+		submissions = append(submissions, submission)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if len(submissions) != 2 {
+		return nil, nil, fmt.Errorf("submission pair not found in class")
+	}
+	if submissions[0].SubmissionID == submissions[1].SubmissionID {
+		return nil, nil, fmt.Errorf("submission pair must contain two different submissions")
+	}
+
+	tagMap, err := r.getSubmissionTagsMap([]int64{submissions[0].SubmissionID, submissions[1].SubmissionID})
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range submissions {
+		submissions[i].Tags = tagMap[submissions[i].SubmissionID]
+		submissions[i].MarkedCheating = hasSubmissionTag(submissions[i].Tags, models.SubmissionTagCheating)
+	}
+
+	left, right := submissions[0], submissions[1]
+	if left.UserID > right.UserID {
+		left, right = right, left
+	}
+	return &left, &right, nil
 }
 
 // GetClassDetail 获取班级完整详情
@@ -400,6 +536,12 @@ func (r *ClassRepository) GetClassDetail(classID int64) (*ClassDetailData, error
 		return nil, err
 	}
 
+	// 获取班级题目列表，供教师在管理页直接选择查重目标。
+	problems, err := r.GetClassProblems(classID)
+	if err != nil {
+		return nil, err
+	}
+
 	// 获取学生进度
 	students, err := r.GetClassStudentProgress(classID)
 	if err != nil {
@@ -409,6 +551,70 @@ func (r *ClassRepository) GetClassDetail(classID int64) (*ClassDetailData, error
 	return &ClassDetailData{
 		ClassInfo:   *classInfo,
 		Experiments: experiments,
+		Problems:    problems,
 		Students:    students,
 	}, nil
+}
+
+func (r *ClassRepository) getSubmissionTagsMap(submissionIDs []int64) (map[int64][]string, error) {
+	result := make(map[int64][]string, len(submissionIDs))
+	if len(submissionIDs) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, 0, len(submissionIDs))
+	args := make([]interface{}, 0, len(submissionIDs))
+	for _, id := range submissionIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+		result[id] = []string{}
+	}
+
+	query := fmt.Sprintf(`
+		SELECT submission_id, tag
+		FROM submission_tags
+		WHERE submission_id IN (%s)
+		ORDER BY submission_id ASC, id ASC
+	`, strings.Join(placeholders, ", "))
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		if isMissingTableError(err, "submission_tags") {
+			return result, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var submissionID int64
+		var tag string
+		if err := rows.Scan(&submissionID, &tag); err != nil {
+			return nil, err
+		}
+		result[submissionID] = append(result[submissionID], tag)
+	}
+
+	return result, rows.Err()
+}
+
+func extractSubmissionIDs(submissions []models.ClassProblemSubmission) []int64 {
+	ids := make([]int64, 0, len(submissions))
+	for _, submission := range submissions {
+		ids = append(ids, submission.SubmissionID)
+	}
+	return ids
+}
+
+func hasSubmissionTag(tags []string, target string) bool {
+	for _, tag := range tags {
+		if tag == target {
+			return true
+		}
+	}
+	return false
+}
+
+func isMissingTableError(err error, tableName string) bool {
+	return err != nil && strings.Contains(err.Error(), tableName) && strings.Contains(strings.ToLower(err.Error()), "doesn't exist")
 }

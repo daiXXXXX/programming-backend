@@ -91,6 +91,19 @@ CREATE TABLE IF NOT EXISTS submissions (
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 提交标签
+-- 用于保存教师在查重复核后打上的业务标签，例如“作弊”。
+CREATE TABLE IF NOT EXISTS submission_tags (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    submission_id BIGINT NOT NULL,
+    tag VARCHAR(50) NOT NULL,
+    created_by BIGINT DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_submission_tag (submission_id, tag),
+    FOREIGN KEY (submission_id) REFERENCES submissions(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- 测试结果
 CREATE TABLE IF NOT EXISTS test_results (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -133,6 +146,8 @@ CREATE INDEX idx_problem_tags_problem_id ON problem_tags(problem_id);
 CREATE INDEX idx_problem_examples_problem_id ON problem_examples(problem_id);
 CREATE INDEX idx_test_cases_problem_id ON test_cases(problem_id);
 CREATE INDEX idx_problem_reference_solutions_created_by ON problem_reference_solutions(created_by);
+CREATE INDEX idx_submission_tags_submission_id ON submission_tags(submission_id);
+CREATE INDEX idx_submission_tags_created_by ON submission_tags(created_by);
 
 -- 插入初始数据
 INSERT IGNORE INTO users (username, email, password_hash, role) VALUES 

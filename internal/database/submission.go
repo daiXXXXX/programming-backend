@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/daiXXXXX/programming-backend/internal/models"
@@ -109,6 +110,12 @@ func (r *SubmissionRepository) GetByID(id int64) (*models.Submission, error) {
 		return nil, err
 	}
 
+	// 补齐业务标签，便于前端显示“作弊”等人工标注。
+	s.Tags, err = r.GetTags(id)
+	if err != nil {
+		return nil, err
+	}
+
 	return &s, nil
 }
 
@@ -141,6 +148,7 @@ func (r *SubmissionRepository) GetByUserID(userID int64, limit, offset int) ([]m
 
 		// 加载测试结果
 		s.TestResults, _ = r.getTestResults(s.ID)
+		s.Tags, _ = r.GetTags(s.ID)
 		submissions = append(submissions, s)
 	}
 
@@ -176,6 +184,7 @@ func (r *SubmissionRepository) GetByProblemID(problemID int64, limit, offset int
 
 		// 加载测试结果
 		s.TestResults, _ = r.getTestResults(s.ID)
+		s.Tags, _ = r.GetTags(s.ID)
 		submissions = append(submissions, s)
 	}
 
@@ -343,6 +352,55 @@ func (r *SubmissionRepository) GetDailyActivity(userID int64, startDate, endDate
 	return activities, rows.Err()
 }
 
+// GetTags 获取提交的全部标签，若标签表尚未迁移则安全返回空数组。
+func (r *SubmissionRepository) GetTags(submissionID int64) ([]string, error) {
+	query := `SELECT tag FROM submission_tags WHERE submission_id = ? ORDER BY id`
+	rows, err := r.db.Query(query, submissionID)
+	if err != nil {
+		if isMissingSubmissionTagsTable(err) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+
+	tags := make([]string, 0)
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		tags = append(tags, tag)
+	}
+
+	if tags == nil {
+		tags = []string{}
+	}
+	return tags, rows.Err()
+}
+
+// MarkPairAsCheating 为教师确认的可疑 pair 两侧提交都补上“作弊”标签。
+func (r *SubmissionRepository) MarkPairAsCheating(submissionAID, submissionBID, reviewerID int64) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, submissionID := range []int64{submissionAID, submissionBID} {
+		if _, err := tx.Exec(
+			`INSERT IGNORE INTO submission_tags (submission_id, tag, created_by) VALUES (?, ?, ?)`,
+			submissionID,
+			models.SubmissionTagCheating,
+			reviewerID,
+		); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 // CreatePending 创建一条 Pending 状态的提交记录（不含测试结果）
 func (r *SubmissionRepository) CreatePending(submission *models.Submission) (int64, error) {
 	query := `
@@ -416,4 +474,8 @@ func (r *SubmissionRepository) UpdateResult(submissionID int64, status models.Su
 	}
 
 	return tx.Commit()
+}
+
+func isMissingSubmissionTagsTable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "submission_tags") && strings.Contains(strings.ToLower(err.Error()), "doesn't exist")
 }

@@ -16,6 +16,7 @@ import (
 type ManagerHandler struct {
 	classRepo         *database.ClassRepository
 	problemRepo       *database.ProblemRepository
+	submissionRepo    *database.SubmissionRepository
 	plagiarismService *plagiarism.Service
 }
 
@@ -23,11 +24,13 @@ type ManagerHandler struct {
 func NewManagerHandler(
 	classRepo *database.ClassRepository,
 	problemRepo *database.ProblemRepository,
+	submissionRepo *database.SubmissionRepository,
 	plagiarismService *plagiarism.Service,
 ) *ManagerHandler {
 	return &ManagerHandler{
 		classRepo:         classRepo,
 		problemRepo:       problemRepo,
+		submissionRepo:    submissionRepo,
 		plagiarismService: plagiarismService,
 	}
 }
@@ -183,4 +186,90 @@ func (h *ManagerHandler) CheckClassPlagiarism(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, report)
+}
+
+// MarkClassPlagiarismPair allows a teacher/admin to manually confirm one suspicious pair.
+// POST /api/manager/classes/:id/plagiarism-marks
+func (h *ManagerHandler) MarkClassPlagiarismPair(c *gin.Context) {
+	classIDStr := c.Param("id")
+	classID, err := strconv.ParseInt(classIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid class ID"})
+		return
+	}
+
+	if !h.ensureClassAccess(c, classID) {
+		return
+	}
+
+	var req models.PlagiarismMarkRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+	if req.SubmissionAID == req.SubmissionBID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Please select two different submissions"})
+		return
+	}
+
+	left, right, err := h.classRepo.GetClassProblemSubmissionPair(classID, req.ProblemID, req.SubmissionAID, req.SubmissionBID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The selected submissions do not belong to this class problem"})
+		return
+	}
+
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
+		return
+	}
+
+	if err := h.submissionRepo.MarkPairAsCheating(left.SubmissionID, right.SubmissionID, userID.(int64)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to mark submissions"})
+		return
+	}
+
+	left.Tags = appendMissingTag(left.Tags, models.SubmissionTagCheating)
+	right.Tags = appendMissingTag(right.Tags, models.SubmissionTagCheating)
+	left.MarkedCheating = true
+	right.MarkedCheating = true
+
+	c.JSON(http.StatusOK, models.PlagiarismMarkResponse{
+		ClassID:     classID,
+		ProblemID:   req.ProblemID,
+		PairKey:     makePairKey(left.UserID, right.UserID),
+		Tag:         models.SubmissionTagCheating,
+		Message:     "Both submissions have been tagged as cheating",
+		SubmissionA: toManagerSubmissionRef(*left),
+		SubmissionB: toManagerSubmissionRef(*right),
+	})
+}
+
+func appendMissingTag(tags []string, tag string) []string {
+	for _, existing := range tags {
+		if existing == tag {
+			return tags
+		}
+	}
+	return append(append([]string{}, tags...), tag)
+}
+
+func toManagerSubmissionRef(submission models.ClassProblemSubmission) models.PlagiarismSubmissionRef {
+	return models.PlagiarismSubmissionRef{
+		ID:             submission.SubmissionID,
+		Language:       submission.Language,
+		Status:         submission.Status,
+		Score:          submission.Score,
+		SubmittedAt:    submission.SubmittedAt,
+		Selection:      submission.Selection,
+		Tags:           append([]string{}, submission.Tags...),
+		MarkedCheating: submission.MarkedCheating,
+	}
+}
+
+func makePairKey(leftUserID, rightUserID int64) string {
+	if leftUserID > rightUserID {
+		leftUserID, rightUserID = rightUserID, leftUserID
+	}
+	return strconv.FormatInt(leftUserID, 10) + ":" + strconv.FormatInt(rightUserID, 10)
 }

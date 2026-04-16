@@ -70,6 +70,8 @@ type Submission struct {
 	Language    string           `json:"language"`
 	Status      SubmissionStatus `json:"status"`
 	Score       int              `json:"score"`
+	// Tags 用于展示教师手动打上的业务标签，例如“作弊”。
+	Tags        []string         `json:"tags"`
 	TestResults []TestResult     `json:"testResults,omitempty"`
 	SubmittedAt time.Time        `json:"submittedAt"`
 }
