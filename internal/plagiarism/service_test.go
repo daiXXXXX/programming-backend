@@ -4,43 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/daiXXXXX/programming-backend/internal/ai"
 	"github.com/daiXXXXX/programming-backend/internal/models"
 )
 
-type fakeAnalyzer struct {
-	called bool
-	req    *ai.PairAnalysisRequest
-	resp   *ai.PairAnalysisResponse
-	err    error
-}
-
-func (f *fakeAnalyzer) AnalyzePairs(_ context.Context, req *ai.PairAnalysisRequest) (*ai.PairAnalysisResponse, error) {
-	f.called = true
-	f.req = req
-	return f.resp, f.err
-}
-
+// TestCheckClassProblemSelectsSuspiciousPair 验证高度相似的代码能被启发式筛选识别为可疑对。
 func TestCheckClassProblemSelectsSuspiciousPair(t *testing.T) {
-	analyzer := &fakeAnalyzer{
-		resp: &ai.PairAnalysisResponse{
-			OverallSummary: "One suspicious pair found.",
-			Analyses: []ai.PairAnalysis{
-				{
-					PairKey:     "1:2",
-					Verdict:     "likely_plagiarism",
-					RiskLevel:   "high",
-					Suspicious:  true,
-					Confidence:  0.93,
-					Summary:     "Both solutions share the same uncommon helper structure and redundant branches.",
-					Evidence:    []string{"Matching helper decomposition", "Same redundant branch ordering"},
-					Differences: []string{"Variable names were renamed"},
-				},
-			},
-		},
-	}
-
-	service := NewService(analyzer)
+	service := NewService()
 	problem := &models.Problem{
 		ID:          7,
 		Title:       "Two Sum",
@@ -85,14 +54,6 @@ func TestCheckClassProblemSelectsSuspiciousPair(t *testing.T) {
 		t.Fatalf("CheckClassProblem returned error: %v", err)
 	}
 
-	if !analyzer.called {
-		t.Fatalf("expected analyzer to be called")
-	}
-
-	if len(analyzer.req.Pairs) != 1 {
-		t.Fatalf("expected exactly one candidate pair, got %d", len(analyzer.req.Pairs))
-	}
-
 	if report.CandidatePairs != 1 {
 		t.Fatalf("expected report candidate count to be 1, got %d", report.CandidatePairs)
 	}
@@ -101,14 +62,19 @@ func TestCheckClassProblemSelectsSuspiciousPair(t *testing.T) {
 		t.Fatalf("expected one result, got %d", len(report.Results))
 	}
 
-	if report.Results[0].Verdict != "likely_plagiarism" {
-		t.Fatalf("expected likely_plagiarism verdict, got %q", report.Results[0].Verdict)
+	// 启发式筛选后的结果应该标记为 suspicious
+	if report.Results[0].Verdict != "suspicious" {
+		t.Fatalf("expected suspicious verdict, got %q", report.Results[0].Verdict)
+	}
+
+	if report.Results[0].HeuristicScore < fixedMinHeuristic {
+		t.Fatalf("expected heuristic score >= %.2f, got %.3f", fixedMinHeuristic, report.Results[0].HeuristicScore)
 	}
 }
 
-func TestCheckClassProblemSkipsAIWhenFewerThanTwoSubmissions(t *testing.T) {
-	analyzer := &fakeAnalyzer{}
-	service := NewService(analyzer)
+// TestCheckClassProblemSkipsWhenFewerThanTwoSubmissions 验证少于两份提交时直接返回空结果。
+func TestCheckClassProblemSkipsWhenFewerThanTwoSubmissions(t *testing.T) {
+	service := NewService()
 
 	report, err := service.CheckClassProblem(context.Background(), 1, &models.Problem{
 		ID:    99,
@@ -130,25 +96,20 @@ func TestCheckClassProblemSkipsAIWhenFewerThanTwoSubmissions(t *testing.T) {
 		t.Fatalf("CheckClassProblem returned error: %v", err)
 	}
 
-	if analyzer.called {
-		t.Fatalf("analyzer should not be called when there are fewer than two submissions")
-	}
-
 	if report.CandidatePairs != 0 {
 		t.Fatalf("expected zero candidate pairs, got %d", report.CandidatePairs)
 	}
 }
 
-func TestCheckClassProblemSkipsAIWhenNoPairMeetsThreshold(t *testing.T) {
-	analyzer := &fakeAnalyzer{}
-	service := NewService(analyzer)
+// TestCheckClassProblemNoPairMeetsThreshold 验证不相似的代码不会被标记为可疑。
+func TestCheckClassProblemNoPairMeetsThreshold(t *testing.T) {
+	service := NewService()
 
 	report, err := service.CheckClassProblem(context.Background(), 2, &models.Problem{
 		ID:    88,
 		Title: "Different Solutions",
 	}, models.PlagiarismCheckRequest{
-		ProblemID:         88,
-		MinHeuristicScore: 0.9,
+		ProblemID: 88,
 	}, []models.ClassProblemSubmission{
 		{
 			UserID:       1,
@@ -173,15 +134,12 @@ func TestCheckClassProblemSkipsAIWhenNoPairMeetsThreshold(t *testing.T) {
 		t.Fatalf("CheckClassProblem returned error: %v", err)
 	}
 
-	if analyzer.called {
-		t.Fatalf("analyzer should not be called when no pair meets the heuristic threshold")
-	}
-
 	if report.CandidatePairs != 0 {
 		t.Fatalf("expected zero candidate pairs, got %d", report.CandidatePairs)
 	}
 }
 
+// TestHeuristicSimilarityIgnoresSurfaceLevelChanges 验证变量改名等表面差异不影响启发式分数。
 func TestHeuristicSimilarityIgnoresSurfaceLevelChanges(t *testing.T) {
 	left := `
 		// first version

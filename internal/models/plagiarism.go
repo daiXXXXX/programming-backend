@@ -12,19 +12,19 @@ type PlagiarismCheckRequest struct {
 }
 
 type ClassProblemSubmission struct {
-	UserID       int64            `json:"userId"`
-	Username     string           `json:"username"`
-	Avatar       string           `json:"avatar"`
-	SubmissionID int64            `json:"submissionId"`
-	ProblemID    int64            `json:"problemId"`
-	Code         string           `json:"code"`
-	Language     string           `json:"language"`
-	Status       SubmissionStatus `json:"status"`
-	Score        int              `json:"score"`
-	SubmittedAt  time.Time        `json:"submittedAt"`
-	Selection    string           `json:"selection"`
-	Tags         []string         `json:"tags"`
-	MarkedCheating bool           `json:"markedCheating"`
+	UserID         int64            `json:"userId"`
+	Username       string           `json:"username"`
+	Avatar         string           `json:"avatar"`
+	SubmissionID   int64            `json:"submissionId"`
+	ProblemID      int64            `json:"problemId"`
+	Code           string           `json:"code"`
+	Language       string           `json:"language"`
+	Status         SubmissionStatus `json:"status"`
+	Score          int              `json:"score"`
+	SubmittedAt    time.Time        `json:"submittedAt"`
+	Selection      string           `json:"selection"`
+	Tags           []string         `json:"tags"`
+	MarkedCheating bool             `json:"markedCheating"`
 }
 
 type PlagiarismStudent struct {
@@ -34,14 +34,14 @@ type PlagiarismStudent struct {
 }
 
 type PlagiarismSubmissionRef struct {
-	ID          int64            `json:"id"`
-	Language    string           `json:"language"`
-	Status      SubmissionStatus `json:"status"`
-	Score       int              `json:"score"`
-	SubmittedAt time.Time        `json:"submittedAt"`
-	Selection   string           `json:"selection"`
-	Tags        []string         `json:"tags"`
-	MarkedCheating bool          `json:"markedCheating"`
+	ID             int64            `json:"id"`
+	Language       string           `json:"language"`
+	Status         SubmissionStatus `json:"status"`
+	Score          int              `json:"score"`
+	SubmittedAt    time.Time        `json:"submittedAt"`
+	Selection      string           `json:"selection"`
+	Tags           []string         `json:"tags"`
+	MarkedCheating bool             `json:"markedCheating"`
 }
 
 type PlagiarismPairResult struct {
@@ -51,7 +51,6 @@ type PlagiarismPairResult struct {
 	SubmissionA    PlagiarismSubmissionRef `json:"submissionA"`
 	SubmissionB    PlagiarismSubmissionRef `json:"submissionB"`
 	HeuristicScore float64                 `json:"heuristicScore"`
-	AIConfidence   float64                 `json:"aiConfidence"`
 	RiskLevel      string                  `json:"riskLevel"`
 	Verdict        string                  `json:"verdict"`
 	Summary        string                  `json:"summary"`
@@ -78,11 +77,11 @@ type PlagiarismMarkRequest struct {
 }
 
 type PlagiarismMarkResponse struct {
-	ClassID     int64                  `json:"classId"`
-	ProblemID   int64                  `json:"problemId"`
-	PairKey     string                 `json:"pairKey"`
-	Tag         string                 `json:"tag"`
-	Message     string                 `json:"message"`
+	ClassID     int64                   `json:"classId"`
+	ProblemID   int64                   `json:"problemId"`
+	PairKey     string                  `json:"pairKey"`
+	Tag         string                  `json:"tag"`
+	Message     string                  `json:"message"`
 	SubmissionA PlagiarismSubmissionRef `json:"submissionA"`
 	SubmissionB PlagiarismSubmissionRef `json:"submissionB"`
 }

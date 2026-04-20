@@ -2,25 +2,21 @@ package plagiarism
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/daiXXXXX/programming-backend/internal/ai"
 	"github.com/daiXXXXX/programming-backend/internal/models"
 )
 
-var ErrAnalyzerNotConfigured = errors.New("ai plagiarism analyzer is not configured")
-
+// 启发式阈值固定为 0.55，不再暴露给外部调用者调整。
+// 超过此阈值的 pair 直接作为可疑对返回给教师人工复核。
 const (
-	defaultMaxCandidates   = 5
-	maxCandidateLimit      = 10
-	defaultMinHeuristic    = 0.55
-	maxProblemDescription  = 1600
-	maxCodeCharactersForAI = 7000
-	shingleSize            = 5
+	defaultMaxCandidates = 5
+	maxCandidateLimit    = 10
+	fixedMinHeuristic    = 0.55 // 固定阈值，不允许用户修改
+	shingleSize          = 5
 )
 
 var (
@@ -45,20 +41,19 @@ var keywordSet = map[string]struct{}{
 	"while": {},
 }
 
-type analysisClient interface {
-	AnalyzePairs(ctx context.Context, req *ai.PairAnalysisRequest) (*ai.PairAnalysisResponse, error)
+// Service 只做本地启发式相似度筛选，不再依赖外部 AI 服务。
+// 超过固定阈值 (0.55) 的 pair 直接作为可疑对返回。
+type Service struct{}
+
+// NewService 创建查重服务（不再需要 AI client）。
+func NewService() *Service {
+	return &Service{}
 }
 
-type Service struct {
-	client analysisClient
-}
-
-func NewService(client analysisClient) *Service {
-	return &Service{client: client}
-}
-
+// CheckClassProblem 对班级内某道题的学生提交做启发式相似度筛选。
+// 超过固定阈值的 pair 作为可疑对直接返回给教师人工复核，不再调用 AI。
 func (s *Service) CheckClassProblem(
-	ctx context.Context,
+	_ context.Context,
 	classID int64,
 	problem *models.Problem,
 	req models.PlagiarismCheckRequest,
@@ -77,59 +72,27 @@ func (s *Service) CheckClassProblem(
 	}
 
 	if problem == nil {
-		report.OverallSummary = "Problem metadata is missing, so plagiarism analysis could not run."
+		report.OverallSummary = "题目元信息缺失，无法执行查重分析。"
 		return report, nil
 	}
 
 	if len(submissions) < 2 {
-		report.OverallSummary = "At least two student submissions are required before plagiarism analysis can run."
+		report.OverallSummary = "至少需要两份学生提交才能进行查重分析。"
 		return report, nil
 	}
 
-	candidates := buildCandidatePairs(submissions, resolveMaxCandidates(req.MaxCandidates), resolveMinHeuristic(req.MinHeuristicScore))
+	// 只使用固定阈值 0.55 做本地启发式筛选
+	candidates := buildCandidatePairs(submissions, resolveMaxCandidates(req.MaxCandidates), fixedMinHeuristic)
 	report.CandidatePairs = len(candidates)
 	if len(candidates) == 0 {
-		report.OverallSummary = "Heuristic pre-screen found no suspicious pairs worth sending to the AI reviewer."
+		report.OverallSummary = "启发式筛选未发现超过阈值的可疑 pair。"
 		return report, nil
 	}
 
-	if s == nil || s.client == nil {
-		return nil, ErrAnalyzerNotConfigured
-	}
+	report.OverallSummary = fmt.Sprintf("启发式筛选发现 %d 对可疑代码（阈值 %.2f），请教师人工复核。", len(candidates), fixedMinHeuristic)
 
-	analysisRequest := buildAnalysisRequest(problem, candidates)
-	analysisResponse, err := s.client.AnalyzePairs(ctx, analysisRequest)
-	if err != nil {
-		if errors.Is(err, ai.ErrNotConfigured) {
-			return nil, ErrAnalyzerNotConfigured
-		}
-		return nil, fmt.Errorf("analyze candidate pairs: %w", err)
-	}
-
-	report.OverallSummary = strings.TrimSpace(analysisResponse.OverallSummary)
-	if report.OverallSummary == "" {
-		report.OverallSummary = "AI analysis completed for the candidate pairs."
-	}
-
-	analysisByKey := make(map[string]ai.PairAnalysis, len(analysisResponse.Analyses))
-	for _, analysis := range analysisResponse.Analyses {
-		analysisByKey[analysis.PairKey] = analysis
-	}
-
+	// 直接把通过启发式筛选的 pair 作为可疑对返回
 	for _, candidate := range candidates {
-		analysis, ok := analysisByKey[candidate.PairKey]
-		if !ok {
-			analysis = ai.PairAnalysis{
-				PairKey:     candidate.PairKey,
-				Verdict:     "needs_review",
-				RiskLevel:   "medium",
-				Confidence:  candidate.HeuristicScore,
-				Summary:     "The candidate was selected by the heuristic pre-screen, but the AI response did not include a structured verdict for it.",
-				Evidence:    []string{"Local similarity pre-screen selected this pair."},
-				Differences: []string{},
-			}
-		}
-
 		report.Results = append(report.Results, models.PlagiarismPairResult{
 			PairKey:        candidate.PairKey,
 			StudentA:       toReportStudent(candidate.Left),
@@ -137,17 +100,28 @@ func (s *Service) CheckClassProblem(
 			SubmissionA:    toSubmissionRef(candidate.Left),
 			SubmissionB:    toSubmissionRef(candidate.Right),
 			HeuristicScore: roundSimilarity(candidate.HeuristicScore),
-			AIConfidence:   roundSimilarity(clamp01(analysis.Confidence)),
-			RiskLevel:      strings.TrimSpace(analysis.RiskLevel),
-			Verdict:        strings.TrimSpace(analysis.Verdict),
-			Summary:        strings.TrimSpace(analysis.Summary),
-			Evidence:       normalizeList(analysis.Evidence),
-			Differences:    normalizeList(analysis.Differences),
+			Verdict:        "suspicious",
+			RiskLevel:      heuristicRiskLevel(candidate.HeuristicScore),
+			Summary:        fmt.Sprintf("本地启发式相似度 %.1f%%，超过阈值 %.0f%%，建议人工复核。", candidate.HeuristicScore*100, fixedMinHeuristic*100),
+			Evidence:       []string{"代码结构经标准化后高度相似（shingle Jaccard）"},
+			Differences:    []string{},
 			AlreadyMarked:  candidate.Left.MarkedCheating && candidate.Right.MarkedCheating,
 		})
 	}
 
 	return report, nil
+}
+
+// heuristicRiskLevel 根据启发式分数确定风险等级
+func heuristicRiskLevel(score float64) string {
+	switch {
+	case score >= 0.85:
+		return "high"
+	case score >= 0.70:
+		return "medium"
+	default:
+		return "low"
+	}
 }
 
 type candidatePair struct {
@@ -188,28 +162,6 @@ func buildCandidatePairs(submissions []models.ClassProblemSubmission, maxCandida
 	}
 
 	return selected
-}
-
-func buildAnalysisRequest(problem *models.Problem, candidates []candidatePair) *ai.PairAnalysisRequest {
-	request := &ai.PairAnalysisRequest{
-		ProblemTitle:       problem.Title,
-		ProblemDescription: trimForAI(problem.Description, maxProblemDescription),
-		Pairs:              make([]ai.PairCandidate, 0, len(candidates)),
-	}
-
-	for _, candidate := range candidates {
-		request.Pairs = append(request.Pairs, ai.PairCandidate{
-			PairKey:        candidate.PairKey,
-			HeuristicScore: roundSimilarity(candidate.HeuristicScore),
-			Language:       preferredLanguage(candidate.Left.Language, candidate.Right.Language),
-			StudentA:       toAIPairStudent(candidate.Left),
-			StudentB:       toAIPairStudent(candidate.Right),
-			CodeA:          trimForAI(candidate.Left.Code, maxCodeCharactersForAI),
-			CodeB:          trimForAI(candidate.Right.Code, maxCodeCharactersForAI),
-		})
-	}
-
-	return request
 }
 
 func heuristicSimilarity(leftCode, rightCode string) float64 {
@@ -319,13 +271,6 @@ func comparableLanguages(left, right string) bool {
 	return left == "" || right == "" || left == right
 }
 
-func preferredLanguage(left, right string) string {
-	if strings.TrimSpace(left) != "" {
-		return left
-	}
-	return right
-}
-
 func makePairKey(leftUserID, rightUserID int64) string {
 	return fmt.Sprintf("%d:%d", leftUserID, rightUserID)
 }
@@ -350,13 +295,6 @@ func resolveMaxCandidates(value int) int {
 	}
 }
 
-func resolveMinHeuristic(value float64) float64 {
-	if value <= 0 || value >= 1 {
-		return defaultMinHeuristic
-	}
-	return value
-}
-
 func toReportStudent(submission models.ClassProblemSubmission) models.PlagiarismStudent {
 	return models.PlagiarismStudent{
 		UserID:   submission.UserID,
@@ -367,67 +305,22 @@ func toReportStudent(submission models.ClassProblemSubmission) models.Plagiarism
 
 func toSubmissionRef(submission models.ClassProblemSubmission) models.PlagiarismSubmissionRef {
 	return models.PlagiarismSubmissionRef{
-		ID:          submission.SubmissionID,
-		Language:    submission.Language,
-		Status:      submission.Status,
-		Score:       submission.Score,
-		SubmittedAt: submission.SubmittedAt,
-		Selection:   submission.Selection,
-		Tags:        append([]string{}, submission.Tags...),
+		ID:             submission.SubmissionID,
+		Language:       submission.Language,
+		Status:         submission.Status,
+		Score:          submission.Score,
+		SubmittedAt:    submission.SubmittedAt,
+		Selection:      submission.Selection,
+		Tags:           append([]string{}, submission.Tags...),
 		MarkedCheating: submission.MarkedCheating,
 	}
 }
 
-func toAIPairStudent(submission models.ClassProblemSubmission) ai.PairStudent {
-	return ai.PairStudent{
-		UserID:       submission.UserID,
-		Username:     submission.Username,
-		SubmissionID: submission.SubmissionID,
-		Status:       string(submission.Status),
-		SubmittedAt:  submission.SubmittedAt,
-		Selection:    submission.Selection,
-	}
-}
-
-func trimForAI(value string, maxChars int) string {
-	value = strings.TrimSpace(value)
-	if maxChars <= 0 || len(value) <= maxChars {
-		return value
-	}
-	return value[:maxChars] + "\n...[truncated]"
-}
-
-func normalizeList(items []string) []string {
-	if len(items) == 0 {
-		return []string{}
-	}
-
-	result := make([]string, 0, len(items))
-	for _, item := range items {
-		item = strings.TrimSpace(item)
-		if item != "" {
-			result = append(result, item)
-		}
-	}
-
-	if result == nil {
-		return []string{}
-	}
-	return result
-}
-
-func clamp01(value float64) float64 {
-	switch {
-	case value < 0:
-		return 0
-	case value > 1:
-		return 1
-	default:
-		return value
-	}
-}
-
 func roundSimilarity(value float64) float64 {
-	value = clamp01(value)
+	if value < 0 {
+		value = 0
+	} else if value > 1 {
+		value = 1
+	}
 	return float64(int(value*1000+0.5)) / 1000
 }

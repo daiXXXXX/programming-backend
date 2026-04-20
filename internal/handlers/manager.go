@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 
@@ -173,15 +172,7 @@ func (h *ManagerHandler) CheckClassPlagiarism(c *gin.Context) {
 
 	report, err := h.plagiarismService.CheckClassProblem(c.Request.Context(), classID, problem, req, submissions)
 	if err != nil {
-		if errors.Is(err, plagiarism.ErrAnalyzerNotConfigured) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error":   "AI plagiarism analysis is not configured",
-				"message": "Set OPENAI_API_KEY before using the plagiarism check endpoint",
-			})
-			return
-		}
-
-		c.JSON(http.StatusBadGateway, gin.H{"error": "AI plagiarism analysis failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查重分析失败: " + err.Error()})
 		return
 	}
 

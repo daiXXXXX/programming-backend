@@ -4,7 +4,6 @@ import (
 	"log"
 	"strings"
 
-	"github.com/daiXXXXX/programming-backend/internal/ai"
 	"github.com/daiXXXXX/programming-backend/internal/auth"
 	"github.com/daiXXXXX/programming-backend/internal/cache"
 	"github.com/daiXXXXX/programming-backend/internal/config"
@@ -74,8 +73,8 @@ func main() {
 	submissionHandler := handlers.NewSubmissionHandler(submissionRepo, problemRepo, eval, redisCache)
 	authHandler := handlers.NewAuthHandler(userRepo, jwtManager)
 	rankingHandler := handlers.NewRankingHandler(userRepo, redisCache)
-	openAIClient := ai.NewOpenAIClient(cfg.OpenAI)
-	plagiarismService := plagiarism.NewService(openAIClient)
+	// 查重服务（纯本地启发式，不依赖外部 AI）
+	plagiarismService := plagiarism.NewService()
 	managerHandler := handlers.NewManagerHandler(classRepo, problemRepo, submissionRepo, plagiarismService)
 	solutionHandler := handlers.NewSolutionHandler(solutionRepo, wsHub)
 
