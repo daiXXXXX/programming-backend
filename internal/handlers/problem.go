@@ -54,6 +54,36 @@ func (h *ProblemHandler) GetProblems(c *gin.Context) {
 	c.JSON(http.StatusOK, problems)
 }
 
+// GetDailyRecommendation 获取当前登录用户的每日一题推荐。
+// GET /api/problems/daily-recommendation
+func (h *ProblemHandler) GetDailyRecommendation(c *gin.Context) {
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User not authenticated",
+		})
+		return
+	}
+
+	userID, ok := userIDVal.(int64)
+	if !ok || userID <= 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "Invalid user identity",
+		})
+		return
+	}
+
+	recommendation, err := h.repo.GetDailyRecommendation(userID, time.Now())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to fetch daily recommendation",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, recommendation)
+}
+
 // GetProblem 获取单个题目详情
 // GET /api/problems/:id
 func (h *ProblemHandler) GetProblem(c *gin.Context) {

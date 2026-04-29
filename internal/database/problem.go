@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/daiXXXXX/programming-backend/internal/models"
@@ -15,6 +16,19 @@ type ProblemRepository struct {
 
 func NewProblemRepository(db *DB) *ProblemRepository {
 	return &ProblemRepository{db: db}
+}
+
+const dailyRecommendationRecentLimit = 20
+
+type recentAcceptedProblem struct {
+	ID         int64
+	Difficulty models.DifficultyLevel
+}
+
+type recommendationProfile struct {
+	HasRecentAccepted bool
+	TagWeights        map[string]float64
+	DifficultyWeights map[models.DifficultyLevel]float64
 }
 
 // GetAll 获取所有题目（不包含测试用例详情），支持按标题模糊搜索
@@ -100,6 +114,307 @@ func (r *ProblemRepository) GetByID(id int64) (*models.Problem, error) {
 	p.TestCases, _ = r.GetTestCases(p.ID)
 
 	return &p, nil
+}
+
+// GetDailyRecommendation 为用户选择一道未 AC 且贴近最近 AC 画像的每日题目。
+func (r *ProblemRepository) GetDailyRecommendation(userID int64, today time.Time) (*models.DailyProblemRecommendation, error) {
+	profile, err := r.buildRecommendationProfile(userID, dailyRecommendationRecentLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	candidates, err := r.getRecommendationCandidates(userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		return &models.DailyProblemRecommendation{
+			Reason:      "no_available_problem",
+			MatchedTags: []string{},
+		}, nil
+	}
+
+	bestIndex := 0
+	bestScore, bestMatchedTags := scoreRecommendationCandidate(candidates[0], profile)
+	bestTie := dailyRecommendationTie(candidates[0].ID, today)
+
+	for i := 1; i < len(candidates); i++ {
+		score, matchedTags := scoreRecommendationCandidate(candidates[i], profile)
+		tie := dailyRecommendationTie(candidates[i].ID, today)
+		if score > bestScore || (score == bestScore && tie > bestTie) {
+			bestIndex = i
+			bestScore = score
+			bestTie = tie
+			bestMatchedTags = matchedTags
+		}
+	}
+
+	problem := candidates[bestIndex]
+	// 推荐卡片进入详情页时复用题目列表所需的轻量示例和公开测试点元数据。
+	problem.Examples, _ = r.GetExamples(problem.ID)
+	problem.TestCases, _ = r.GetTestCasesMeta(problem.ID)
+
+	reason := "cold_start"
+	if profile.HasRecentAccepted {
+		reason = "matched_recent_difficulty"
+		if len(bestMatchedTags) > 0 {
+			reason = "matched_recent_tags"
+		}
+	}
+
+	return &models.DailyProblemRecommendation{
+		Problem:     &problem,
+		Reason:      reason,
+		MatchedTags: bestMatchedTags,
+	}, nil
+}
+
+func (r *ProblemRepository) buildRecommendationProfile(userID int64, limit int) (recommendationProfile, error) {
+	profile := recommendationProfile{
+		TagWeights:        make(map[string]float64),
+		DifficultyWeights: make(map[models.DifficultyLevel]float64),
+	}
+
+	query := `
+		SELECT ac.problem_id, p.difficulty
+		FROM (
+			SELECT problem_id, MAX(submitted_at) AS latest_accepted_at
+			FROM submissions
+			WHERE user_id = ? AND status = ?
+			GROUP BY problem_id
+			ORDER BY latest_accepted_at DESC
+			LIMIT ?
+		) ac
+		JOIN problems p ON p.id = ac.problem_id
+		ORDER BY ac.latest_accepted_at DESC
+	`
+	rows, err := r.db.Query(query, userID, string(models.StatusAccepted), limit)
+	if err != nil {
+		return profile, err
+	}
+	defer rows.Close()
+
+	recentProblems := make([]recentAcceptedProblem, 0, limit)
+	for rows.Next() {
+		var item recentAcceptedProblem
+		if err := rows.Scan(&item.ID, &item.Difficulty); err != nil {
+			return profile, err
+		}
+		recentProblems = append(recentProblems, item)
+	}
+	if err := rows.Err(); err != nil {
+		return profile, err
+	}
+	if len(recentProblems) == 0 {
+		return profile, nil
+	}
+
+	profile.HasRecentAccepted = true
+	problemIDs := make([]int64, 0, len(recentProblems))
+	for index, item := range recentProblems {
+		weight := float64(len(recentProblems) - index)
+		profile.DifficultyWeights[item.Difficulty] += weight
+		problemIDs = append(problemIDs, item.ID)
+	}
+
+	tagsByProblem, err := r.getProblemTagsMap(problemIDs)
+	if err != nil {
+		return profile, err
+	}
+	for index, item := range recentProblems {
+		weight := float64(len(recentProblems) - index)
+		for _, tag := range tagsByProblem[item.ID] {
+			normalizedTag := normalizeRecommendationTag(tag)
+			if normalizedTag != "" {
+				profile.TagWeights[normalizedTag] += weight
+			}
+		}
+	}
+
+	return profile, nil
+}
+
+func (r *ProblemRepository) getRecommendationCandidates(userID int64) ([]models.Problem, error) {
+	query := `
+		SELECT p.id, p.title, p.difficulty, p.description, p.input_format, p.output_format,
+		       p.constraints_text, p.created_at, p.updated_at,
+		       GROUP_CONCAT(pt.tag ORDER BY pt.id SEPARATOR ',') AS tags
+		FROM problems p
+		LEFT JOIN problem_tags pt ON pt.problem_id = p.id
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM submissions s
+			WHERE s.user_id = ?
+			  AND s.problem_id = p.id
+			  AND s.status = ?
+		)
+		GROUP BY p.id, p.title, p.difficulty, p.description, p.input_format, p.output_format,
+		         p.constraints_text, p.created_at, p.updated_at
+		ORDER BY p.id ASC
+	`
+
+	rows, err := r.db.Query(query, userID, string(models.StatusAccepted))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	candidates := make([]models.Problem, 0)
+	for rows.Next() {
+		var problem models.Problem
+		var tags sql.NullString
+		if err := rows.Scan(
+			&problem.ID, &problem.Title, &problem.Difficulty, &problem.Description,
+			&problem.InputFormat, &problem.OutputFormat, &problem.Constraints,
+			&problem.CreatedAt, &problem.UpdatedAt, &tags,
+		); err != nil {
+			return nil, err
+		}
+		if tags.Valid {
+			problem.Tags = splitRecommendationTags(tags.String)
+		} else {
+			problem.Tags = []string{}
+		}
+		candidates = append(candidates, problem)
+	}
+
+	return candidates, rows.Err()
+}
+
+func (r *ProblemRepository) getProblemTagsMap(problemIDs []int64) (map[int64][]string, error) {
+	result := make(map[int64][]string, len(problemIDs))
+	if len(problemIDs) == 0 {
+		return result, nil
+	}
+
+	placeholders, args := buildInt64Placeholders(problemIDs)
+	query := fmt.Sprintf(`
+		SELECT problem_id, tag
+		FROM problem_tags
+		WHERE problem_id IN (%s)
+		ORDER BY id
+	`, placeholders)
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var problemID int64
+		var tag string
+		if err := rows.Scan(&problemID, &tag); err != nil {
+			return nil, err
+		}
+		result[problemID] = append(result[problemID], tag)
+	}
+
+	return result, rows.Err()
+}
+
+func buildInt64Placeholders(values []int64) (string, []interface{}) {
+	placeholders := make([]string, 0, len(values))
+	args := make([]interface{}, 0, len(values))
+	for _, value := range values {
+		placeholders = append(placeholders, "?")
+		args = append(args, value)
+	}
+	return strings.Join(placeholders, ","), args
+}
+
+func scoreRecommendationCandidate(problem models.Problem, profile recommendationProfile) (float64, []string) {
+	if !profile.HasRecentAccepted {
+		return coldStartDifficultyScore(problem.Difficulty), []string{}
+	}
+
+	score := 0.0
+	matchedTags := make([]string, 0)
+	seenTags := make(map[string]struct{}, len(problem.Tags))
+	for _, tag := range problem.Tags {
+		normalizedTag := normalizeRecommendationTag(tag)
+		if normalizedTag == "" {
+			continue
+		}
+		if _, exists := seenTags[normalizedTag]; exists {
+			continue
+		}
+		seenTags[normalizedTag] = struct{}{}
+
+		if weight, ok := profile.TagWeights[normalizedTag]; ok {
+			score += weight * 3
+			matchedTags = append(matchedTags, tag)
+		}
+	}
+
+	for difficulty, weight := range profile.DifficultyWeights {
+		score += weight * difficultySimilarity(problem.Difficulty, difficulty)
+	}
+
+	return score, matchedTags
+}
+
+func normalizeRecommendationTag(tag string) string {
+	return strings.ToLower(strings.TrimSpace(tag))
+}
+
+func splitRecommendationTags(raw string) []string {
+	parts := strings.Split(raw, ",")
+	tags := make([]string, 0, len(parts))
+	for _, part := range parts {
+		tag := strings.TrimSpace(part)
+		if tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+	return tags
+}
+
+func difficultySimilarity(candidate, recent models.DifficultyLevel) float64 {
+	distance := difficultyRank(candidate) - difficultyRank(recent)
+	if distance < 0 {
+		distance = -distance
+	}
+
+	switch distance {
+	case 0:
+		return 1
+	case 1:
+		return 0.55
+	default:
+		return 0.15
+	}
+}
+
+func difficultyRank(difficulty models.DifficultyLevel) int {
+	switch difficulty {
+	case models.DifficultyEasy:
+		return 1
+	case models.DifficultyMedium:
+		return 2
+	case models.DifficultyHard:
+		return 3
+	default:
+		return 2
+	}
+}
+
+func coldStartDifficultyScore(difficulty models.DifficultyLevel) float64 {
+	switch difficulty {
+	case models.DifficultyEasy:
+		return 3
+	case models.DifficultyMedium:
+		return 2
+	case models.DifficultyHard:
+		return 1
+	default:
+		return 2
+	}
+}
+
+func dailyRecommendationTie(problemID int64, today time.Time) int64 {
+	dayKey := int64(today.Year()*1000 + today.YearDay())
+	return (problemID*1103515245 + dayKey*12345) % 2147483647
 }
 
 // GetTags 获取题目标签

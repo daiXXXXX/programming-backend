@@ -135,6 +135,7 @@ func main() {
 		problems.Use(middleware.OptionalAuthMiddleware(jwtManager))
 		{
 			problems.GET("", problemHandler.GetProblems)
+			problems.GET("/daily-recommendation", problemHandler.GetDailyRecommendation)
 			problems.GET("/:id", problemHandler.GetProblem)
 		}
 

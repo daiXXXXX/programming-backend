@@ -36,6 +36,13 @@ type Problem struct {
 	UpdatedAt    time.Time       `json:"updatedAt"`
 }
 
+// DailyProblemRecommendation 返回当前登录用户的每日题目推荐。
+type DailyProblemRecommendation struct {
+	Problem     *Problem `json:"problem"`
+	Reason      string   `json:"reason"`
+	MatchedTags []string `json:"matchedTags"`
+}
+
 // ProblemStandardProgram 出题时提交的标准程序，用于校验测试数据并在后台留档。
 type ProblemStandardProgram struct {
 	Language string `json:"language" binding:"required"`
@@ -63,17 +70,17 @@ type TestCase struct {
 
 // Submission 提交记录
 type Submission struct {
-	ID          int64            `json:"id"`
-	ProblemID   int64            `json:"problemId"`
-	UserID      int64            `json:"userId"`
-	Code        string           `json:"code"`
-	Language    string           `json:"language"`
-	Status      SubmissionStatus `json:"status"`
-	Score       int              `json:"score"`
+	ID        int64            `json:"id"`
+	ProblemID int64            `json:"problemId"`
+	UserID    int64            `json:"userId"`
+	Code      string           `json:"code"`
+	Language  string           `json:"language"`
+	Status    SubmissionStatus `json:"status"`
+	Score     int              `json:"score"`
 	// Tags 用于展示教师手动打上的业务标签，例如“作弊”。
-	Tags        []string         `json:"tags"`
-	TestResults []TestResult     `json:"testResults,omitempty"`
-	SubmittedAt time.Time        `json:"submittedAt"`
+	Tags        []string     `json:"tags"`
+	TestResults []TestResult `json:"testResults,omitempty"`
+	SubmittedAt time.Time    `json:"submittedAt"`
 }
 
 // TestResult 测试结果
