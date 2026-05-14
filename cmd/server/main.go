@@ -186,6 +186,8 @@ func main() {
 			manager.GET("/classes/:id", managerHandler.GetClassDetail)
 			manager.POST("/classes/:id/plagiarism-check", managerHandler.CheckClassPlagiarism)
 			manager.POST("/classes/:id/plagiarism-marks", managerHandler.MarkClassPlagiarismPair)
+			manager.POST("/classes/:id/experiments", managerHandler.CreateClassExperiment)
+			manager.DELETE("/classes/:id/experiments/:experimentId", managerHandler.DeleteClassExperiment)
 		}
 
 		// 题解相关路由（公开读取，需登录写入）

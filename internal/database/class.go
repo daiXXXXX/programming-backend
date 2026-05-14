@@ -618,3 +618,113 @@ func hasSubmissionTag(tags []string, target string) bool {
 func isMissingTableError(err error, tableName string) bool {
 	return err != nil && strings.Contains(err.Error(), tableName) && strings.Contains(strings.ToLower(err.Error()), "doesn't exist")
 }
+
+// CreateExperimentInput 创建实验所需的入参
+type CreateExperimentInput struct {
+	ClassID     int64
+	Title       string
+	Description string
+	StartTime   time.Time
+	EndTime     time.Time
+	IsActive    bool
+	CreatedBy   int64
+}
+
+// CreateExperimentForClass 在事务中插入一条实验，并把它绑定到指定班级。
+// 调用方在 handler 中已校验班级归属和必填字段。
+func (r *ClassRepository) CreateExperimentForClass(input CreateExperimentInput) (*ExperimentInfo, error) {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	insertExp := `
+		INSERT INTO experiments (title, description, start_time, end_time, is_active, created_by)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`
+	res, err := tx.Exec(insertExp,
+		input.Title,
+		input.Description,
+		input.StartTime,
+		input.EndTime,
+		boolToTinyInt(input.IsActive),
+		nullableInt64(input.CreatedBy),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	experimentID, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.Exec(
+		`INSERT INTO class_experiments (class_id, experiment_id) VALUES (?, ?)`,
+		input.ClassID, experimentID,
+	); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return &ExperimentInfo{
+		ID:           experimentID,
+		Title:        input.Title,
+		Description:  input.Description,
+		StartTime:    input.StartTime,
+		EndTime:      input.EndTime,
+		IsActive:     input.IsActive,
+		ProblemCount: 0,
+	}, nil
+}
+
+// GetExperimentClassID 返回实验关联的班级 ID，找不到时返回 0。
+// 用于在删除前确认实验属于教师可访问的班级。
+func (r *ClassRepository) GetExperimentClassID(experimentID int64) (int64, error) {
+	var classID int64
+	err := r.db.QueryRow(
+		`SELECT class_id FROM class_experiments WHERE experiment_id = ? LIMIT 1`,
+		experimentID,
+	).Scan(&classID)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return classID, nil
+}
+
+// DeleteExperiment 根据 ID 删除实验，依赖 ON DELETE CASCADE 清理关联表。
+func (r *ClassRepository) DeleteExperiment(experimentID int64) error {
+	res, err := r.db.Exec(`DELETE FROM experiments WHERE id = ?`, experimentID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func boolToTinyInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func nullableInt64(v int64) interface{} {
+	if v <= 0 {
+		return nil
+	}
+	return v
+}

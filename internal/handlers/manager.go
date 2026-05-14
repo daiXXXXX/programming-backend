@@ -1,8 +1,12 @@
 package handlers
 
 import (
+	"database/sql"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/daiXXXXX/programming-backend/internal/auth"
 	"github.com/daiXXXXX/programming-backend/internal/database"
@@ -256,6 +260,144 @@ func toManagerSubmissionRef(submission models.ClassProblemSubmission) models.Pla
 		Tags:           append([]string{}, submission.Tags...),
 		MarkedCheating: submission.MarkedCheating,
 	}
+}
+
+// createExperimentRequest 创建实验的请求体。
+// 时间统一以 RFC3339 / ISO8601 字符串传入，避免前后端时区歧义。
+type createExperimentRequest struct {
+	Title       string `json:"title" binding:"required"`
+	Description string `json:"description"`
+	StartTime   string `json:"startTime" binding:"required"`
+	EndTime     string `json:"endTime" binding:"required"`
+	IsActive    *bool  `json:"isActive"`
+}
+
+// CreateClassExperiment 在指定班级下新建一个实验。
+// POST /api/manager/classes/:id/experiments
+func (h *ManagerHandler) CreateClassExperiment(c *gin.Context) {
+	classIDStr := c.Param("id")
+	classID, err := strconv.ParseInt(classIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid class ID"})
+		return
+	}
+
+	if !h.ensureClassAccess(c, classID) {
+		return
+	}
+
+	var req createExperimentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title is required"})
+		return
+	}
+
+	startTime, err := parseFlexibleTime(req.StartTime)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid startTime: " + err.Error()})
+		return
+	}
+	endTime, err := parseFlexibleTime(req.EndTime)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid endTime: " + err.Error()})
+		return
+	}
+	if !endTime.After(startTime) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "endTime must be later than startTime"})
+		return
+	}
+
+	userIDVal, _ := c.Get("userID")
+	createdBy, _ := userIDVal.(int64)
+
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+
+	experiment, err := h.classRepo.CreateExperimentForClass(database.CreateExperimentInput{
+		ClassID:     classID,
+		Title:       title,
+		Description: strings.TrimSpace(req.Description),
+		StartTime:   startTime,
+		EndTime:     endTime,
+		IsActive:    isActive,
+		CreatedBy:   createdBy,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create experiment"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, experiment)
+}
+
+// DeleteClassExperiment 删除一条实验，仅允许实验所属班级的教师或管理员操作。
+// DELETE /api/manager/classes/:id/experiments/:experimentId
+func (h *ManagerHandler) DeleteClassExperiment(c *gin.Context) {
+	classIDStr := c.Param("id")
+	classID, err := strconv.ParseInt(classIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid class ID"})
+		return
+	}
+
+	experimentIDStr := c.Param("experimentId")
+	experimentID, err := strconv.ParseInt(experimentIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid experiment ID"})
+		return
+	}
+
+	if !h.ensureClassAccess(c, classID) {
+		return
+	}
+
+	// 校验该实验确实属于当前班级，避免越权删除其它班级的实验。
+	ownerClassID, err := h.classRepo.GetExperimentClassID(experimentID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify experiment"})
+		return
+	}
+	if ownerClassID == 0 || ownerClassID != classID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Experiment not found in this class"})
+		return
+	}
+
+	if err := h.classRepo.DeleteExperiment(experimentID); err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Experiment not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete experiment"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Experiment deleted"})
+}
+
+// parseFlexibleTime 兼容前端传入的多种时间格式：标准 RFC3339、不带时区的 ISO 字符串。
+func parseFlexibleTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04",
+		"2006-01-02",
+	}
+	for _, layout := range layouts {
+		if t, err := time.ParseInLocation(layout, value, time.Local); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unsupported time format: %q", value)
 }
 
 func makePairKey(leftUserID, rightUserID int64) string {
